@@ -89,7 +89,7 @@ export function ModuleRequests(node: ParseNode): ModuleRequestRecord[] {
       if (node.FromClause) {
         const specifier = StringValue(node.FromClause);
         const attributes = node.WithClause ? WithClauseToAttributes(node.WithClause) : [];
-        return [{ Specifier: specifier, Attributes: attributes, Phase: 'evaluation' }];
+        return [{ Specifier: specifier, Attributes: attributes, Phase: node.Phase ?? 'evaluation' }];
       }
       return [];
     default:
