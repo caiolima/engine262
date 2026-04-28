@@ -1,5 +1,6 @@
 import { Q, X } from '../completion.mts';
 import { AbstractModuleRecord, CyclicModuleRecord, ResolvedBindingRecord } from '../modules.mts';
+import type { ImportedNamesValue } from '../static-semantics/ModuleRequests.mts';
 import {
   SymbolValue,
   Value,
@@ -10,7 +11,6 @@ import {
   UndefinedValue,
   type PropertyKeyValue,
   ObjectValue,
-  BooleanValue,
 } from '../value.mts';
 import { type Mutable } from '../utils/language.mts';
 import { JSStringSet } from '../utils/container.mts';
@@ -31,9 +31,9 @@ import {
   GetModuleNamespace, R,
   type ExoticObject,
   EvaluateModuleSync,
-  GetImportedModule,
+  ReadyForSyncExecution,
 } from './all.mts';
-import { Throw, type ModuleRecord, type PlainEvaluator } from '#self';
+import { Throw, type PlainEvaluator } from '#self';
 
 export interface ModuleNamespaceObject extends ExoticObject {
   readonly Module: AbstractModuleRecord;
@@ -116,7 +116,7 @@ const InternalMethods = {
     }
     return Value.false;
   },
-  /** https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-get-p-receiver */
+  /** https://tc39.es/proposal-deferred-reexports/#sec-module-namespace-exotic-objects-get-p-receiver */
   * Get(P, Receiver) {
     const O = this;
 
@@ -127,13 +127,33 @@ const InternalMethods = {
       // a. Return ? OrdinaryGet(O, P, Receiver).
       return yield* OrdinaryGet(O, P, Receiver);
     }
-    const exports = Q(yield* GetModuleExportsList(O));
-    // 4. If P is not an element of exports, return undefined.
-    if (!exports.has(P as JSStringValue)) {
+    // Per proposal-deferred-reexports: only [[Get]] triggers EvaluateModuleSync.
+    // The exports list itself is observed without side effects.
+    if (!O.Exports.has(P as JSStringValue)) {
       return Value.undefined;
     }
     // 5. Let m be O.[[Module]].
     const m = O.Module;
+    // Trigger sync evaluation when the binding flows through a deferred re-export
+    // (regular namespace) or when the namespace itself is deferred.
+    if (m instanceof CyclicModuleRecord) {
+      let importedNames: ImportedNamesValue;
+      let triggers: boolean;
+      if (O.Deferred) {
+        importedNames = 'all';
+        triggers = m.Status !== 'evaluated' && m.Status !== 'evaluating-async';
+      } else {
+        importedNames = [P as JSStringValue];
+        const optionalRequests = m.GetOptionalIndirectExportsModuleRequests(importedNames);
+        triggers = optionalRequests.length > 0;
+      }
+      if (triggers) {
+        if (ReadyForSyncExecution(m, importedNames) === Value.false) {
+          return Throw.TypeError('Module "$1" is not ready for synchronous execution', m.HostDefined?.specifier ?? '<anonymous module>');
+        }
+        Q(yield* EvaluateModuleSync(m, importedNames));
+      }
+    }
     // 6. Let binding be ! m.ResolveExport(P).
     const binding = m.ResolveExport(P as JSStringValue);
     // 7. Assert: binding is a ResolvedBinding Record.
@@ -275,33 +295,4 @@ function* GetModuleExportsList(O: ModuleNamespaceObject): PlainEvaluator<JSStrin
     Q(yield* EvaluateModuleSync(m));
   }
   return O.Exports;
-}
-
-/** https://tc39.es/proposal-defer-import-eval/#sec-ReadyForSyncExecution */
-export function ReadyForSyncExecution(module: ModuleRecord, seen?: Set<CyclicModuleRecord>): BooleanValue {
-  if (!(module instanceof CyclicModuleRecord)) {
-    return Value.true;
-  }
-  seen ??= new Set();
-  if (seen.has(module)) {
-    return Value.true;
-  }
-  seen.add(module);
-  if (module.Status === 'evaluated') {
-    return Value.true;
-  }
-  if (module.Status === 'evaluating' || module.Status === 'evaluating-async') {
-    return Value.false;
-  }
-  Assert(module.Status === 'linked');
-  if (module.HasTLA === Value.true) {
-    return Value.false;
-  }
-  for (const request of module.RequestedModules) {
-    const requiredModule = GetImportedModule(module, request);
-    if (ReadyForSyncExecution(requiredModule, seen) === Value.false) {
-      return Value.false;
-    }
-  }
-  return Value.true;
 }

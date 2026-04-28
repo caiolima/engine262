@@ -11,6 +11,7 @@ import {
   ModuleRecord,
 } from '../modules.mts';
 import {
+  BooleanValue,
   ObjectValue, Value,
 } from '../value.mts';
 import {
@@ -32,7 +33,6 @@ import {
   Realm,
   HostGetSupportedImportAttributes,
   ModuleRequestsEqual,
-  ReadyForSyncExecution,
   type Arguments, type ImportAttributeRecord, type ImportedNamesValue, type ModuleRequestRecord, type PlainEvaluator, type ScriptRecord, type SourceTextModuleRecord,
   Throw,
   JSStringValue,
@@ -307,15 +307,53 @@ export function InnerModuleLinking(
   return index;
 }
 
-/** https://tc39.es/ecma262/#sec-EvaluateModuleSync */
-export function* EvaluateModuleSync(module: ModuleRecord): PlainEvaluator<undefined> {
-  // 1. Assert: If module is a Cyclic Module Record, ReadyForSyncExecution(module) is true.
-  Assert(module instanceof CyclicModuleRecord ? ReadyForSyncExecution(module) === Value.true : true);
+/** https://tc39.es/proposal-deferred-reexports/#sec-ReadyForSyncExecution */
+export function ReadyForSyncExecution(
+  module: ModuleRecord,
+  importedNames: ImportedNamesValue = 'all',
+  seen: Set<CyclicModuleRecord> = new Set(),
+): BooleanValue {
+  if (!(module instanceof CyclicModuleRecord)) {
+    return Value.true;
+  }
+  if (seen.has(module)) {
+    return Value.true;
+  }
+  seen.add(module);
+  if (module.Status === 'evaluated') {
+    return Value.true;
+  }
+  if (module.Status === 'evaluating' || module.Status === 'evaluating-async') {
+    return Value.false;
+  }
+  Assert(module.Status === 'linked');
+  if (module.HasTLA === Value.true) {
+    return Value.false;
+  }
+  for (const request of module.RequestedModules) {
+    const requiredModule = GetImportedModule(module, request);
+    if (ReadyForSyncExecution(requiredModule, request.ImportedNames, seen) === Value.false) {
+      return Value.false;
+    }
+  }
+  for (const request of module.GetOptionalIndirectExportsModuleRequests(importedNames)) {
+    const requiredModule = GetImportedModule(module, request);
+    if (ReadyForSyncExecution(requiredModule, request.ImportedNames, seen) === Value.false) {
+      return Value.false;
+    }
+  }
+  return Value.true;
+}
+
+/** https://tc39.es/proposal-deferred-reexports/#sec-EvaluateModuleSync */
+export function* EvaluateModuleSync(module: ModuleRecord, importedNames: ImportedNamesValue = 'all'): PlainEvaluator<undefined> {
+  // 1. Assert: If module is a Cyclic Module Record, ReadyForSyncExecution(module, importedNames) is true.
+  Assert(module instanceof CyclicModuleRecord ? ReadyForSyncExecution(module, importedNames) === Value.true : true);
   if (!(module instanceof CyclicModuleRecord && module.Status === 'evaluated')) {
     Q(surroundingAgent.debugger_cannotPreview);
   }
-  // 2. Let promise be module.Evaluate()./
-  const promise = yield* module.Evaluate();
+  // 2. Let promise be module.Evaluate(importedNames).
+  const promise = yield* module.Evaluate(importedNames);
   // 3. Assert: promise.[[PromiseState]] is either fulfilled or rejected.
   Assert(promise.PromiseState === 'fulfilled' || promise.PromiseState === 'rejected');
   // 4. If promise.[[PromiseState]] is rejected, then
