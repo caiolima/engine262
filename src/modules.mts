@@ -242,12 +242,15 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
 
     Assert(module.Status === 'linked' || module.Status === 'evaluating-async' || module.Status === 'evaluated');
 
+    // Reuse an existing TopLevelCapability when one is reachable via CycleRoot
+    // (e.g., dynamic import of a module already evaluated as a static
+    // dependency). Otherwise fall through to the fresh-capability path —
+    // InnerModuleEvaluation short-circuits for already-evaluated modules.
     let topLevelPromise: PromiseObject;
-    if (module.Status === 'evaluating-async' || module.Status === 'evaluated') {
-      Assert(module.CycleRoot !== undefined && module.CycleRoot.TopLevelCapability !== undefined);
+    if ((module.Status === 'evaluating-async' || module.Status === 'evaluated')
+        && module.CycleRoot !== undefined && module.CycleRoot.TopLevelCapability !== undefined) {
       topLevelPromise = module.CycleRoot.TopLevelCapability.Promise;
     } else {
-      Assert(module.CycleRoot === undefined && module.TopLevelCapability === undefined);
       const stack: CyclicModuleRecord[] = [];
       const capability = X(NewPromiseCapability(surroundingAgent.intrinsic('%Promise%')));
       module.TopLevelCapability = capability;

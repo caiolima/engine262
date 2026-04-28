@@ -461,13 +461,13 @@ export function BuildEvaluationList(
   for (const request of moduleRequests) {
     const requiredModule = GetImportedModule(referrer, request);
     if (request.Phase === 'defer') {
-      // First add async transitive deps (so they evaluate before the dep itself
-      // in TLA cycles), then add the deferred dep itself. This eagerly evaluates
-      // sync deferred deps for named-import consumers — matches phase 2a's
-      // intent that `import { x } from barrel` over `export defer { x } from dep`
-      // produces dep.x's value at access time without phase 2b's [[Get]] hook.
       ListAppendUnique(evaluationList, GatherAsynchronousTransitiveDependencies(requiredModule));
-      if (!evaluationList.includes(requiredModule)) {
+      // For named-import consumers (request.ImportedNames is a list of names),
+      // eagerly add the deferred dep so its bindings are available at access time
+      // without phase 2b's [[Get]] hook. For namespace-import consumers
+      // (`import defer * as ns`, ImportedNames='all'), preserve the deferred
+      // semantics: don't add the dep eagerly — the [[Get]] hook handles it.
+      if (request.ImportedNames !== 'all' && !evaluationList.includes(requiredModule)) {
         evaluationList.push(requiredModule);
       }
     } else if (!evaluationList.includes(requiredModule)) {
