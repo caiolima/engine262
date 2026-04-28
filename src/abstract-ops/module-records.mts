@@ -120,6 +120,24 @@ export function ListAppendUnique<T>(target: T[], items: Iterable<T>, equals: (a:
   }
 }
 
+export interface PreviouslyImportedNamesEntry {
+  readonly Module: AbstractModuleRecord;
+  ImportedNames: ImportedNamesValue;
+}
+
+/** https://tc39.es/proposal-deferred-reexports/#sec-getnewoptionalindirectexportsmodulerequests */
+export function GetNewOptionalIndirectExportsModuleRequests(
+  module: AbstractModuleRecord,
+  importedNames: ImportedNamesValue,
+  previouslyImportedNames: PreviouslyImportedNamesEntry[],
+): readonly ModuleRequestRecord[] {
+  const previous = previouslyImportedNames.find((p) => p.Module === module);
+  Assert(previous !== undefined);
+  const newImportedNames = ExcludeImportedNames(importedNames, previous!.ImportedNames);
+  previous!.ImportedNames = MergeImportedNames(previous!.ImportedNames, newImportedNames);
+  return module.GetOptionalIndirectExportsModuleRequests(newImportedNames);
+}
+
 /** https://tc39.es/ecma262/#graphloadingstate-record */
 export class GraphLoadingState {
   readonly PromiseCapability: PromiseCapabilityRecord;
