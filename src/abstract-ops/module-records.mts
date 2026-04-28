@@ -150,95 +150,82 @@ export class GraphLoadingState {
 
   PendingModules = 1;
 
-  constructor({ PromiseCapability, HostDefined }: Pick<GraphLoadingState, 'PromiseCapability' | 'HostDefined'>) {
+  readonly PreviouslyImportedNames: PreviouslyImportedNamesEntry[];
+
+  constructor({ PromiseCapability, HostDefined, PreviouslyImportedNames = [] }: Pick<GraphLoadingState, 'PromiseCapability' | 'HostDefined'> & { PreviouslyImportedNames?: PreviouslyImportedNamesEntry[] }) {
     this.PromiseCapability = PromiseCapability;
     this.HostDefined = HostDefined;
+    this.PreviouslyImportedNames = PreviouslyImportedNames;
   }
 }
 
-/** https://tc39.es/ecma262/#sec-InnerModuleLoading */
-export function InnerModuleLoading(state: GraphLoadingState, module: AbstractModuleRecord) {
+/** https://tc39.es/proposal-deferred-reexports/#sec-InnerModuleLoading */
+export function InnerModuleLoading(state: GraphLoadingState, module: AbstractModuleRecord, importedNames: ImportedNamesValue = 'all') {
   // 1. Assert: state.[[IsLoading]] is true.
-  Assert(Boolean(state.IsLoading === true)); // this Boolean() is let step 2.d.iii not having a type error.
+  Assert(Boolean(state.IsLoading === true));
 
   // 2. If module is a Cyclic Module Record, module.[[Status]] is new, and state.[[Visited]] does not contain module, then
   if (module instanceof CyclicModuleRecord && module.Status === 'new' && !state.Visited.has(module)) {
     // a. Append module to state.[[Visited]].
     state.Visited.add(module);
-    // b. Let requestedModulesCount be the number of elements in module.[[RequestedModules]].
-    const requestedModulesCout = module.RequestedModules.length;
-    // c. Set state.[[PendingModulesCount]] to state.[[PendingModulesCount]] + requestedModulesCount.
-    state.PendingModules += requestedModulesCout;
-    // d. For each ModuleRequest Record request of module.[[RequestedModules]], do
-    for (const request of module.RequestedModules) {
-      // i. If AllImportAttributesSupported(request.[[Attributes]]) is false, then
+
+    // Ensure module has an entry in PreviouslyImportedNames.
+    if (!state.PreviouslyImportedNames.some((p) => p.Module === module)) {
+      state.PreviouslyImportedNames.push({ Module: module, ImportedNames: [] });
+    }
+
+    // Compute optional indirect requests for the deferred re-exports the
+    // current consumer's importedNames touches.
+    const optionalIndirectRequests = GetNewOptionalIndirectExportsModuleRequests(module, importedNames, state.PreviouslyImportedNames);
+    const requestsToLoad: readonly ModuleRequestRecord[] = [...module.RequestedModules, ...optionalIndirectRequests];
+
+    state.PendingModules += requestsToLoad.length;
+
+    for (const request of requestsToLoad) {
       const invalidAttributeKey = AllImportAttributesSupported(request.Attributes);
       if (invalidAttributeKey) {
-        // 1. Let error be ThrowCompletion(a newly created SyntaxError object).
         const error = Throw.SyntaxError('Unsupported import attribute $1', invalidAttributeKey);
-        // 2. Perform ContinueModuleLoading(state, error).
         ContinueModuleLoading(state, error);
       } else {
-        // ii. Else if module.[[LoadedModules]] contains a LoadedModuleRequest Record record such that ModuleRequestsEqual(record, request) is true, then
         const record = getRecordWithSpecifier(module.LoadedModules, request);
         if (record !== undefined) {
-          // 1. Perform InnerModuleLoading(state, record.[[Module]]).
-          InnerModuleLoading(state, record.Module);
-        } else { // iii. Else,
-          // 1. Perform HostLoadImportedModule(module, request, state.[[HostDefined]], state).
+          InnerModuleLoading(state, record.Module, request.ImportedNames);
+        } else {
           HostLoadImportedModule(module, request, state.HostDefined, state);
         }
       }
 
-      // iii. If state.[[IsLoading]] is false, return unused.
       if (state.IsLoading === false) {
         return;
       }
     }
   }
 
-  // 3. Assert: state.[[PendingModulesCount]] ≥ 1.
   Assert(state.PendingModules >= 1);
-  // 4. Set state.[[PendingModulesCount]] to state.[[PendingModulesCount]] - 1.
   state.PendingModules -= 1;
-  // 5. If state.[[PendingModulesCount]] = 0, then
   if (state.PendingModules === 0) {
-    // a. Set state.[[IsLoading]] to false.
     state.IsLoading = false;
-    // b. For each Cyclic Module Record loaded of state.[[Visited]], do
     for (const loaded of state.Visited) {
-      // i. If loaded.[[Status]] is new, set loaded.[[Status]] to unlinked.
       if (loaded.Status === 'new') {
         loaded.Status = 'unlinked';
       }
     }
-    // c. Perform ! Call(state.[[PromiseCapability]].[[Resolve]], undefined, « undefined »).
     X(Call(state.PromiseCapability.Resolve, Value.undefined, [Value.undefined]));
   }
-
-  // 6. Return unused.
 }
 
 /** https://tc39.es/ecma262/#sec-ContinueModuleLoading */
-export function ContinueModuleLoading(state: GraphLoadingState, result: PlainCompletion<AbstractModuleRecord>) {
-  // 1. If state.[[IsLoading]] is false, return unused.
+export function ContinueModuleLoading(state: GraphLoadingState, result: PlainCompletion<AbstractModuleRecord>, request?: ModuleRequestRecord) {
   if (state.IsLoading === false) {
     return;
   }
   result = EnsureCompletion(result);
-  // 2. If moduleCompletion is a normal completion, then
   if (result instanceof NormalCompletion) {
-    // a. Perform InnerModuleLoading(state, moduleCompletion.[[Value]]).
-    InnerModuleLoading(state, result.Value);
-    // 3. Else,
+    InnerModuleLoading(state, result.Value, request?.ImportedNames ?? 'all');
   } else {
-    // a. Set state.[[IsLoading]] to false.
     state.IsLoading = false;
-    // b. Perform ! Call(state.[[PromiseCapability]].[[Reject]], undefined, « moduleCompletion.[[Value]] »).
     X(Call(state.PromiseCapability.Reject, Value.undefined, [result.Value]));
   }
-
-  // 4. Return unused.
 }
 
 /** https://tc39.es/ecma262/#sec-InnerModuleLinking */
@@ -593,7 +580,7 @@ export function FinishLoadingImportedModule(referrer: ScriptRecord | CyclicModul
   // 2. If payload is a GraphLoadingState Record, then
   if (state instanceof GraphLoadingState) {
     // a. Perform ContinueModuleLoading(payload, result).
-    ContinueModuleLoading(state, result);
+    ContinueModuleLoading(state, result, moduleRequest);
     // 3. Else,
   } else {
     // a. Perform ContinueDynamicImport(payload, result).

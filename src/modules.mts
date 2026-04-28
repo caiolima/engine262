@@ -93,7 +93,7 @@ interface ResolveSetItem {
 
 /** https://tc39.es/ecma262/#sec-abstract-module-records */
 export abstract class AbstractModuleRecord {
-  abstract LoadRequestedModules(hostDefined?: ModuleRecordHostDefined): PromiseObject;
+  abstract LoadRequestedModules(hostDefined?: ModuleRecordHostDefined, importedNames?: ImportedNamesValue): PromiseObject;
 
   abstract GetExportedNames(exportStarSet?: AbstractModuleRecord[]): readonly JSStringValue[];
 
@@ -177,20 +177,17 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
 
   abstract ExecuteModule(capability?: PromiseCapabilityRecord): ValueEvaluator;
 
-  /** https://tc39.es/ecma262/#sec-LoadRequestedModules */
-  LoadRequestedModules(hostDefined?: ModuleRecordHostDefined) {
+  /** https://tc39.es/proposal-deferred-reexports/#sec-LoadRequestedModules */
+  LoadRequestedModules(hostDefined?: ModuleRecordHostDefined, importedNames: ImportedNamesValue = 'all') {
     const module = this;
 
-    // 2. Let pc be ! NewPromiseCapability(%Promise%).
     const pc = X(NewPromiseCapability(surroundingAgent.intrinsic('%Promise%')));
-    // 3. Let state be a new GraphLoadingState Record { [[IsLoading]]: true, [[PendingModulesCount]]: 1, [[Visited]]: « », [[PromiseCapability]]: pc, [[HostDefined]]: hostDefined }.
     const state = new GraphLoadingState({
       PromiseCapability: pc,
       HostDefined: hostDefined,
+      PreviouslyImportedNames: [{ Module: module, ImportedNames: importedNames }],
     });
-    // 4. Perform InnerModuleLoading(state, module).
-    InnerModuleLoading(state, module);
-    // 5. Return pc.[[Promise]].
+    InnerModuleLoading(state, module, importedNames);
     return pc.Promise;
   }
 

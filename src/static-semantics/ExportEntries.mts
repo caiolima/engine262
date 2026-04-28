@@ -2,7 +2,7 @@ import { JSStringValue, NullValue, Value } from '../value.mts';
 import { OutOfRange, isArray } from '../utils/language.mts';
 import type { ParseNode } from '../parser/ParseNode.mts';
 import {
-  BoundNames, ModuleRequests, ExportEntriesForModule, type ModuleRequestRecord,
+  BoundNames, ExportFromDeclarationModuleRequest, ExportEntriesForModule, type ModuleRequestRecord,
 } from './all.mts';
 
 export function ExportEntries(node: ParseNode | readonly ParseNode[]): ExportEntry[] {
@@ -24,11 +24,13 @@ export function ExportEntries(node: ParseNode | readonly ParseNode[]): ExportEnt
     case 'ExportDeclaration':
       switch (true) {
         case !!node.ExportFromClause && !!node.FromClause: {
-          // `export` ExportFromClause FromClause WithClause? `;`
-          // 1. Let module be the sole element of ModuleRequests of FromClause.
-          const module = ModuleRequests(node)[0];
-          // 2. Return ExportEntriesForModule(ExportFromClause, module).
-          return ExportEntriesForModule(node.ExportFromClause, module);
+          // `export` [defer] ExportFromClause FromClause WithClause? `;`
+          // Construct the ModuleRequest directly. ModuleRequests excludes
+          // `export defer` to keep deferred re-exports out of [[RequestedModules]];
+          // ExportEntries still needs the request so the entry references it.
+          const fromNode = node as ParseNode.ExportDeclaration_NamedFrom;
+          const module = ExportFromDeclarationModuleRequest(fromNode);
+          return ExportEntriesForModule(fromNode.ExportFromClause, module);
         }
         case !!node.NamedExports: {
           // `export` NamedExports `;`

@@ -90,6 +90,16 @@ function importedNamesFromExportFromClause(clause: ParseNode.ExportFromClauseLik
   return clause.ExportsList.map((spec) => StringValue(spec.localName));
 }
 
+/** https://tc39.es/proposal-deferred-reexports/#sec-ExportFromDeclarationModuleRequest */
+export function ExportFromDeclarationModuleRequest(node: ParseNode.ExportDeclaration_NamedFrom): ModuleRequestRecord {
+  const specifier = StringValue(node.FromClause);
+  const attributes = node.WithClause ? WithClauseToAttributes(node.WithClause) : [];
+  const importedNames = importedNamesFromExportFromClause(node.ExportFromClause);
+  return {
+    Specifier: specifier, Attributes: attributes, Phase: node.Phase ?? 'evaluation', ImportedNames: importedNames,
+  };
+}
+
 export function ModuleRequests(node: ParseNode): ModuleRequestRecord[] {
   switch (node.type) {
     case 'Module':
@@ -129,12 +139,14 @@ export function ModuleRequests(node: ParseNode): ModuleRequestRecord[] {
     }
     case 'ExportDeclaration':
       if (node.FromClause) {
-        const specifier = StringValue(node.FromClause);
-        const attributes = node.WithClause ? WithClauseToAttributes(node.WithClause) : [];
-        const importedNames = importedNamesFromExportFromClause(node.ExportFromClause!);
-        return [{
-          Specifier: specifier, Attributes: attributes, Phase: node.Phase ?? 'evaluation', ImportedNames: importedNames,
-        }];
+        const fromNode = node as ParseNode.ExportDeclaration_NamedFrom;
+        // `export defer ... from "m"` is tracked via [[OptionalIndirectExportEntries]]
+        // (engine262: filtered in GetOptionalIndirectExportsModuleRequests via Phase),
+        // not RequestedModules — see proposal-deferred-reexports.
+        if (fromNode.Phase === 'defer') {
+          return [];
+        }
+        return [ExportFromDeclarationModuleRequest(fromNode)];
       }
       return [];
     default:
