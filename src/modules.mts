@@ -37,6 +37,7 @@ import {
   InnerModuleLinking,
   InnerModuleLoading,
   type PreviouslyImportedNamesEntry,
+  SafePerformPromiseAll,
   SameValue,
   AsyncBlockStart,
   PromiseCapabilityRecord,
@@ -102,7 +103,7 @@ export abstract class AbstractModuleRecord {
 
   abstract Link(importedNames?: ImportedNamesValue): PlainCompletion<void>;
 
-  abstract Evaluate(): Evaluator<PromiseObject>;
+  abstract Evaluate(importedNames?: ImportedNamesValue): Evaluator<PromiseObject>;
 
   /** https://tc39.es/proposal-deferred-reexports/#sec-getoptionalindirectexportsmodulerequests */
   GetOptionalIndirectExportsModuleRequests(_importedNames: ImportedNamesValue): readonly ModuleRequestRecord[] {
@@ -229,11 +230,10 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
     return NormalCompletion(undefined);
   }
 
-  /** https://tc39.es/ecma262/#sec-moduleevaluation */
-  * Evaluate(): Evaluator<PromiseObject> {
+  /** https://tc39.es/proposal-deferred-reexports/#sec-moduleevaluation */
+  * Evaluate(importedNames: ImportedNamesValue = []): Evaluator<PromiseObject> {
     let module: CyclicModuleRecord = this;
 
-    // 1. Assert: None of module or any of its recursive dependencies have [[Status]] set to evaluating, linking, unlinked, or new.
     Assert((function getModules(module: AbstractModuleRecord, list: CyclicModuleRecord[]) {
       if (!(module instanceof CyclicModuleRecord) || list.includes(module)) {
         return list;
@@ -245,65 +245,65 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
       return list;
     }(this, [])).every((m) => m.Status !== 'evaluating' && m.Status !== 'linking' && m.Status !== 'unlinked' && m.Status !== 'new'));
 
-    // 3. Assert: module.[[Status]] is linked or evaluated.
     Assert(module.Status === 'linked' || module.Status === 'evaluating-async' || module.Status === 'evaluated');
-    // 3. If module.[[Status]] is evaluating-async or evaluated, then
+
+    let topLevelPromise: PromiseObject;
     if (module.Status === 'evaluating-async' || module.Status === 'evaluated') {
-      if (module.CycleRoot !== undefined) {
-        module = module.CycleRoot;
+      Assert(module.CycleRoot !== undefined && module.CycleRoot.TopLevelCapability !== undefined);
+      topLevelPromise = module.CycleRoot.TopLevelCapability.Promise;
+    } else {
+      Assert(module.CycleRoot === undefined && module.TopLevelCapability === undefined);
+      const stack: CyclicModuleRecord[] = [];
+      const capability = X(NewPromiseCapability(surroundingAgent.intrinsic('%Promise%')));
+      module.TopLevelCapability = capability;
+      const result = yield* InnerModuleEvaluation(module, stack, 0);
+      if (result instanceof AbruptCompletion) {
+        for (const m of stack) {
+          Assert(m.Status === 'evaluating');
+          m.Status = 'evaluated';
+          m.EvaluationError = result;
+          m.CycleRoot = m;
+        }
+        Assert((module.Status as CyclicModuleRecordStatus) === 'evaluated' && module.EvaluationError === result);
+        X(Call(capability.Reject, Value.undefined, [result.Value]));
       } else {
-        Assert(module.Status === 'evaluated' && module.EvaluationError !== undefined);
+        const postStatus = module.Status as CyclicModuleRecordStatus;
+        Assert(postStatus === 'evaluating-async' || postStatus === 'evaluated');
+        Assert(module.EvaluationError === undefined);
+        if (postStatus === 'evaluated') {
+          Assert(typeof module.AsyncEvaluationOrder !== 'number');
+          X(Call(capability.Resolve, Value.undefined, [Value.undefined]));
+        }
+        Assert(stack.length === 0);
       }
+      topLevelPromise = capability.Promise;
     }
-    // 4. If module.[[TopLevelCapability]] is not ~empty~, then
-    if (module.TopLevelCapability !== undefined) {
-      // a. Return module.[[TopLevelCapability]].[[Promise]].
-      return module.TopLevelCapability.Promise;
+
+    if (topLevelPromise.PromiseState === 'rejected') {
+      return topLevelPromise;
     }
-    // 4. Let stack be a new empty List.
-    const stack: CyclicModuleRecord[] = [];
-    // (*TopLevelAwait) 6. Let capability be ! NewPromiseCapability(%Promise%).
-    const capability = X(NewPromiseCapability(surroundingAgent.intrinsic('%Promise%')));
-    // (*TopLevelAwait) 7. Set module.[[TopLevelCapability]] to capability.
-    module.TopLevelCapability = capability;
-    // 5. Let result be InnerModuleEvaluation(module, stack, 0).
-    const result = yield* InnerModuleEvaluation(module, stack, 0);
-    // 6. If result is an abrupt completion, then
-    if (result instanceof AbruptCompletion) {
-      // a. For each Cyclic Module Record m in stack, do
-      for (const m of stack) {
-        // i. Assert: m.[[Status]] is evaluating.
-        Assert(m.Status === 'evaluating');
-        // iii. Set m.[[Status]] to evaluated.
-        m.Status = 'evaluated';
-        // iv. Set m.[[EvaluationError]] to result.
-        m.EvaluationError = result;
-        // v. Set _m_.[[CycleRoot]] to _m_.
-        m.CycleRoot = m;
+
+    const optionalIndirectRequests = module.GetOptionalIndirectExportsModuleRequests(importedNames);
+    const promises: PromiseObject[] = [topLevelPromise];
+    for (const request of optionalIndirectRequests) {
+      const requiredModule = GetImportedModule(module, request);
+      Assert(
+        !(requiredModule instanceof CyclicModuleRecord)
+        || requiredModule.Status === 'linked'
+        || requiredModule.Status === 'evaluating-async'
+        || requiredModule.Status === 'evaluated',
+      );
+      const innerPromise = yield* requiredModule.Evaluate(request.ImportedNames);
+      if (innerPromise.PromiseState === 'rejected') {
+        return innerPromise;
       }
-      // b. Assert: module.[[Status]] is evaluated and module.[[EvaluationError]] is result.
-      Assert(module.Status === 'evaluated' && module.EvaluationError === result);
-      // c. Return result.
-      // c. (*TopLevelAwait) Perform ! Call(capability.[[Reject]], undefined, «result.[[Value]]»).
-      X(Call(capability.Reject, Value.undefined, [result.Value]));
-    } else { // (*TopLevelAwait) 10. Otherwise,
-      // a. Assert: module.[[Status]] is evaluating-async or evaluated.
-      Assert(module.Status === 'evaluating-async' || module.Status === 'evaluated');
-      // b. Assert: module.[[EvaluationError]] is ~empty~.
-      Assert(module.EvaluationError === undefined);
-      // c. If module.[[Status]] is evaluated, then
-      if (module.Status === 'evaluated') {
-        // i. Assert: module.[[AsyncEvaluationOrder]] is not an integer.
-        Assert(typeof module.AsyncEvaluationOrder !== 'number');
-        // ii. Perform ! Call(capability.[[Resolve]], undefined, «undefined»).
-        X(Call(capability.Resolve, Value.undefined, [Value.undefined]));
-      }
-      // d. Assert: stack is empty.
-      Assert(stack.length === 0);
+      promises.push(innerPromise);
     }
-    // 9. Return undefined.
-    // (*TopLevelAwait) 11. Return capability.[[Promise]].
-    return capability.Promise;
+
+    if (promises.some((p) => p.PromiseState === 'pending')) {
+      return SafePerformPromiseAll(promises);
+    }
+    return topLevelPromise;
   }
 
   override mark(m: GCMarker) {

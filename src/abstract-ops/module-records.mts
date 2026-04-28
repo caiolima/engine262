@@ -328,7 +328,7 @@ export function* EvaluateModuleSync(module: ModuleRecord): PlainEvaluator<undefi
   return undefined;
 }
 
-/** https://tc39.es/ecma262/#sec-innermoduleevaluation */
+/** https://tc39.es/proposal-deferred-reexports/#sec-innermoduleevaluation */
 export function* InnerModuleEvaluation(module: AbstractModuleRecord, stack: CyclicModuleRecord[], index: number): PlainEvaluator<number> {
   if (!(module instanceof CyclicModuleRecord)) {
     Q(yield* EvaluateModuleSync(module));
@@ -352,19 +352,7 @@ export function* InnerModuleEvaluation(module: AbstractModuleRecord, stack: Cycl
   module.AsyncParentModules = [];
   index += 1;
   const evaluationList: ModuleRecord[] = [];
-  for (const request of module.RequestedModules) {
-    const requiredModule = GetImportedModule(module, request);
-    if (request.Phase === 'defer') {
-      const additionalModules = GatherAsynchronousTransitiveDependencies(requiredModule);
-      for (const additionalModule of additionalModules) {
-        if (!evaluationList.includes(additionalModule)) {
-          evaluationList.push(additionalModule);
-        }
-      }
-    } else if (!evaluationList.includes(requiredModule)) {
-      evaluationList.push(requiredModule);
-    }
-  }
+  BuildEvaluationList(evaluationList, module, module.RequestedModules);
   stack.push(module);
   for (const required of evaluationList!) {
     let requiredModule: ModuleRecord | CyclicModuleRecord = required as ModuleRecord;
