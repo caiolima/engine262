@@ -228,6 +228,29 @@ export function ContinueModuleLoading(state: GraphLoadingState, result: PlainCom
   }
 }
 
+/** https://tc39.es/proposal-deferred-reexports/#sec-buildlinkinglist */
+export function BuildLinkingList(
+  linkingList: AbstractModuleRecord[],
+  referrer: CyclicModuleRecord,
+  moduleRequests: readonly ModuleRequestRecord[],
+  previouslyImportedNames: PreviouslyImportedNamesEntry[],
+): void {
+  for (const request of moduleRequests) {
+    const requiredModule = GetImportedModule(referrer, request);
+    if (!linkingList.includes(requiredModule)) {
+      linkingList.push(requiredModule);
+      if (requiredModule instanceof CyclicModuleRecord) {
+        Assert(!previouslyImportedNames.some((p) => p.Module === requiredModule));
+        previouslyImportedNames.push({ Module: requiredModule, ImportedNames: [] });
+      }
+    }
+    if (requiredModule instanceof CyclicModuleRecord) {
+      const optionalIndirectRequests = GetNewOptionalIndirectExportsModuleRequests(requiredModule, request.ImportedNames, previouslyImportedNames);
+      BuildLinkingList(linkingList, requiredModule, optionalIndirectRequests, previouslyImportedNames);
+    }
+  }
+}
+
 /** https://tc39.es/ecma262/#sec-InnerModuleLinking */
 export function InnerModuleLinking(module: AbstractModuleRecord, stack: CyclicModuleRecord[], index: number): PlainCompletion<number> {
   if (!(module instanceof CyclicModuleRecord)) {
