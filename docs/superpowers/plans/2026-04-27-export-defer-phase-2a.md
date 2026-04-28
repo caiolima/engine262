@@ -1165,3 +1165,93 @@ module-records: add ImportedNames data model and merge helpers
 **`ExcludeImportedNames` opacity** — the spec keeps "all minus list" as an opaque value because the universe of exported names isn't known at intermediate steps. This implementation matches by returning `'all'` or `'all-but-default'` from those branches; downstream filters (`GetOptionalIndirectExportsModuleRequests`) re-evaluate against actual `[[Exports]]`. Per-binding correctness is preserved.
 
 **Phase 2b prerequisites delivered here** — `GatherAsynchronousTransitiveDependencies` is used by phase 2b's `EvaluateModuleSync` and `ReadyForSyncExecution`. Phase 2b will only need to add the `[[Get]]` hook plus the sync-eval driver.
+
+---
+
+## Post-implementation notes (added after phase 2a landed)
+
+This section captures deviations from the plan that emerged during implementation. **Read this carefully when planning phase 2b** — phase 2b builds on the choices made here.
+
+### Deviations from the plan
+
+**1. `OptionalIndirectExportEntries` is a NEW field on `SourceTextModuleRecord`** *(not in the original plan)*
+
+The plan's Task 6 said "filter `IndirectExportEntries` by `Phase === 'defer'`". This was wrong: deferred entries can't be left in `IndirectExportEntries`, because `InitializeEnvironment` eagerly resolves every entry there via `GetImportedModule(module, e.ModuleRequest)`. For an `export defer { x } from "./dep"` whose dep is never loaded (no consumer), that lookup asserts.
+
+The correct architecture, matching `proposal-deferred-reexports` spec text:
+- `ExportEntry` for `export defer { ... } from` lands in a NEW field `OptionalIndirectExportEntries` on `SourceTextModuleRecord` (`src/modules.mts:325-326`, populated in `src/parse.mts:147-149,182-185,201`).
+- `GetOptionalIndirectExportsModuleRequests` walks `OptionalIndirectExportEntries` (no Phase filter needed — they're all deferred there).
+- `ResolveExport` walks `[...IndirectExportEntries, ...OptionalIndirectExportEntries]` (per spec line 1650).
+- `GetExportedNames` walks both (per spec line 1594).
+- `InitializeEnvironment` only walks `IndirectExportEntries` (deferred entries are NOT eagerly validated).
+
+**2. `ModuleRequests` returns `[]` for `export defer`** *(not in the original plan)*
+
+The plan implicitly assumed the deferred re-export's request would still flow into `RequestedModules`. Per the spec (proposal line 358-359: `ExportDeclaration : export defer ExportFromClause FromClause WithClause? ;` → "Return a new empty List"), it must NOT — otherwise `BuildLinkingList`/`InnerModuleLoading` would unconditionally pull dep into the link/load lists.
+
+Implementation: `src/static-semantics/ModuleRequests.mts` skips the `defer` Phase in the `ExportDeclaration` case, and a new `ExportFromDeclarationModuleRequest(node)` helper is called from both `ModuleRequests` (for non-defer) and `ExportEntries` (always, so `ExportEntry.ModuleRequest` still references the right request).
+
+**3. `previouslyImportedNames` is per-`BuildLinkingList`-call, not threaded** *(not in the original plan)*
+
+The plan's Task 10 step 1 threaded `previouslyImportedNames` through `InnerModuleLinking` recursive calls. Per spec (line 1071), each `InnerModuleLinking` call seeds `BuildLinkingList` with `« »` (empty). The threading is internal to one `BuildLinkingList` call, not across `InnerModuleLinking` recursion. Same for `Link()` — no setup of `previouslyImportedNames` at the top.
+
+Implementation: `InnerModuleLinking(module, stack, index)` (no `previouslyImportedNames` param). `BuildLinkingList(linkingList, module, module.RequestedModules, [])` — fresh empty list per call.
+
+**4. `LoadRequestedModules` does NOT pre-populate the visited entry** *(plan was wrong)*
+
+The plan's Task 8 step 1 had `LoadRequestedModules` create `PreviouslyImportedNames: [{ Module: module, ImportedNames: importedNames }]`. Wrong: when `InnerModuleLoading` then runs `GetNewOptionalIndirectExportsModuleRequests`, `previous[module] === importedNames`, so `ExcludeImportedNames(importedNames, importedNames) === []` and no optional-indirect requests are returned. Effect: deferred deps never load.
+
+Per spec (line 953-958), `LoadRequestedModules` creates `state.[[Visited]] = « »` (empty); `InnerModuleLoading` itself appends `{Module: module, ImportedNames: « »}` and then computes new requests. Implementation matches.
+
+**5. `Evaluate` has BOTH a fast-path AND a fresh-capability path** *(extension to plan)*
+
+Per spec (line 1145), already-evaluated modules use `module.[[CycleRoot]].[[TopLevelCapability]].[[Promise]]`. But in engine262, a module evaluated only as a transitive dep can have `CycleRoot === self` and `TopLevelCapability === undefined` (set only when the module is the entry point). The spec assertion `module.[[CycleRoot]].[[TopLevelCapability]] is not ~empty~` would fail.
+
+The implementation gates on the assertion's premise: if `CycleRoot && CycleRoot.TopLevelCapability` exist, reuse the promise. Otherwise fall through to the fresh-capability path — `InnerModuleEvaluation` short-circuits for already-evaluated modules and the new capability resolves synchronously. This preserves the original engine262 behavior for dynamic-import re-evaluation (`language/expressions/dynamic-import/reuse-namespace-object-from-import.js`).
+
+**6. `BuildEvaluationList` eagerly adds the deferred dep itself when consumer uses named imports** *(critical deviation — phase 2b will need to revisit)*
+
+Per spec (line 1283-1286): for a `defer`-Phase request, `ListAppendUnique(eval, GatherAsynchronousTransitiveDependencies(requiredModule))`. `GatherAsync` for a sync module returns its async transitive deps only — the module itself is omitted unless `HasTLA`.
+
+But the PR 5034 fixtures (which the plan declared as phase 2a's validation target) expect sync deferred deps to be evaluated before the consumer's body executes — e.g., `import { x } from barrel` where `barrel` does `export defer { x } from dep` and dep is sync. Without dep being added to the eval list, dep's body never runs and `x === undefined`.
+
+Implementation deviates from spec: when `request.Phase === 'defer'` AND `request.ImportedNames !== 'all'`, the deferred `requiredModule` is appended to `evaluationList` directly (after its async transitive deps). The `'all'` gate preserves `import defer * as ns from "..."` semantics — for namespace consumers, the dep should NOT eagerly evaluate (its evaluation is deferred to the namespace `[[Get]]` in phase 2b).
+
+**Phase 2b should reconsider this.** Once the namespace `[[Get]]` hook drives sync evaluation lazily, the eager-add for non-namespace consumers may still be the right behavior (named imports through a deferred re-export DO need the binding's value at access time, and there's no `[[Get]]` interception for module-env bindings). But the rationale should be revisited against the final spec interpretation.
+
+### What changed from the plan's commit list
+
+Plan expected 9 commits. Actual: 12 implementation commits + this docs commit:
+
+```
+0f69030f module-records: lint fixes (brace-style, prefer-const)
+46e4faff modules: gate eager defer-dep evaluation on non-namespace consumers; reuse TopLevelCapability via CycleRoot when present
+dc57a244 modules: separate OptionalIndirectExportEntries; fix BuildEvaluationList to eagerly evaluate sync deferred deps for named-import consumers
+b23a95d2 module-records: route InnerModuleEvaluation and Evaluate through BuildEvaluationList
+fce8fa0e module-records: add BuildEvaluationList
+b06bbbba module-records: add GatherAsynchronousTransitiveDependenciesForRequests
+a2a143bc module-records: route InnerModuleLinking and Link through BuildLinkingList
+2eb000bb module-records: add BuildLinkingList
+8bd19901 module-records: thread ImportedNames through InnerModuleLoading
+767f5068 module-records: add GetNewOptionalIndirectExportsModuleRequests
+568328b0 modules: add GetOptionalIndirectExportsModuleRequests
+045a27c8 module-records: add ImportedNames data model and merge helpers
+```
+
+The extra commits are the bug-fix follow-ups (`dc57a244`, `46e4faff`) and the lint pass (`0f69030f`). Phase 2b should expect a similar shape: the spec text is precise but engine262's existing structure has hidden constraints (assertion paths, abstract-method narrowing) that surface during implementation.
+
+### Test results at end of phase 2a
+
+- All 7 PR 5034 `load-and-evaluation/` scenarios pass (× 2 modes = 13 reachable runs; one fixture has only `[module]` mode).
+- Phase 1 syntax tests: 21 pass, 1 in failed-list (unchanged).
+- Full test262: 45739 passed, 6511 skipped, **28 failed** — all 28 are in `language/export/export-defer/evaluation-triggers/` (phase 2b's `[[Get]]`-hook tests).
+- Vitest (owned + inspector + json): all green.
+- import-defer regression suite: all 201 pass (phase 2b should re-verify after `[[Get]]` changes).
+
+### Pointers for phase 2b planning
+
+- **`GetOptionalIndirectExportsModuleRequests` already exists** with the correct structure (walks `OptionalIndirectExportEntries`). Phase 2b's `EvaluateModuleSync` / `ReadyForSyncExecution` should reuse it.
+- **`GatherAsynchronousTransitiveDependencies` and `…ForRequests` are already implemented** (`src/abstract-ops/module-records.mts`).
+- **`BuildEvaluationList`'s eager-add deviation (#6 above)** is the load-bearing piece for phase 2b's [[Get]] design. If phase 2b's `[[Get]]` triggers `EvaluateModuleSync` lazily, the eager-add for non-namespace consumers might still be needed (since named-import bindings don't go through `[[Get]]`), or might be removable if a different mechanism propagates the synchronous evaluation requirement at link time. Investigate before changing.
+- **`OptionalIndirectExportEntries` is the spec-correct field name and the engine262 implementation matches.** Phase 2b's `ResolveExport` changes (per proposal lines 1657-1664: `deferNamespaceExportSet` handling for `export defer * as ns from ...` chains that re-export non-resolvable bindings) build directly on this.
+- **The `evaluation-triggers/` test directory is the validation target for phase 2b** — 28 currently-failing tests, all involving namespace `[[Get]]` triggering evaluation of the deferred source.
