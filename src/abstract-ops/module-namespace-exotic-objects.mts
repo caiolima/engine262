@@ -1,5 +1,6 @@
 import { Q, X } from '../completion.mts';
 import { AbstractModuleRecord, CyclicModuleRecord, ResolvedBindingRecord } from '../modules.mts';
+import type { PlainEvaluator } from '../evaluator.mts';
 import type { ImportedNamesValue } from '../static-semantics/ModuleRequests.mts';
 import {
   SymbolValue,
@@ -64,7 +65,7 @@ const InternalMethods = {
     if (IsSymbolLikeNamespaceKey(P, O)) {
       return OrdinaryGetOwnProperty(O, P);
     }
-    const exports = GetModuleExportsList(O);
+    const exports = Q(yield* GetModuleExportsList(O));
     if (!exports.has(P as JSStringValue)) {
       return Value.undefined;
     }
@@ -110,7 +111,7 @@ const InternalMethods = {
     if (IsSymbolLikeNamespaceKey(P, O)) {
       return yield* OrdinaryHasProperty(O, P);
     }
-    const exports = GetModuleExportsList(O);
+    const exports = Q(yield* GetModuleExportsList(O));
     if (exports.has(P as JSStringValue)) {
       return Value.true;
     }
@@ -192,7 +193,7 @@ const InternalMethods = {
     if (IsSymbolLikeNamespaceKey(P, O)) {
       return Q(yield* OrdinaryDelete(O, P));
     }
-    const exports = GetModuleExportsList(O);
+    const exports = Q(yield* GetModuleExportsList(O));
     if (exports.has(P as JSStringValue)) {
       return Value.false;
     }
@@ -202,7 +203,7 @@ const InternalMethods = {
     const O = this;
 
     let exports;
-    exports = GetModuleExportsList(O);
+    exports = Q(yield* GetModuleExportsList(O));
     if (O.Deferred && exports.has('then')) {
       exports = [...exports].filter((x) => x.stringValue() !== 'then');
     }
@@ -288,9 +289,15 @@ function IsSymbolLikeNamespaceKey(P: PropertyKeyValue, ns: ModuleNamespaceObject
 }
 
 /** https://tc39.es/proposal-deferred-reexports/#sec-GetModuleExportsList */
-function GetModuleExportsList(O: ModuleNamespaceObject): JSStringSet {
-  // Per proposal-deferred-reexports: only [[Get]] triggers EvaluateModuleSync.
-  // [[GetOwnProperty]], [[HasProperty]], [[OwnPropertyKeys]], [[Delete]] all go
-  // through this helper and must observe the cached exports list without side effects.
+function* GetModuleExportsList(O: ModuleNamespaceObject): PlainEvaluator<JSStringSet> {
+  if (O.Deferred) {
+    const m = O.Module;
+    if (m instanceof CyclicModuleRecord) {
+      if (ReadyForSyncExecution(m, 'all') === Value.false) {
+        return Throw.TypeError('Module "$1" is not ready for synchronous execution', m.HostDefined?.specifier ?? '<anonymous module>');
+      }
+      Q(yield* EvaluateModuleSync(m, 'all'));
+    }
+  }
   return O.Exports;
 }
