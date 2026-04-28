@@ -122,32 +122,34 @@ const InternalMethods = {
 
     // 1. Assert: IsPropertyKey(P) is true.
     Assert(IsPropertyKey(P));
-    // 2. If Type(P) is Symbol, then
     if (IsSymbolLikeNamespaceKey(P, O)) {
-      // a. Return ? OrdinaryGet(O, P, Receiver).
       return yield* OrdinaryGet(O, P, Receiver);
     }
-    // Per proposal-deferred-reexports: only [[Get]] triggers EvaluateModuleSync.
-    // The exports list itself is observed without side effects.
+    const m = O.Module;
+    // For deferred namespaces, [[Get]] of any non-symbol-like key forces full
+    // evaluation of the module (matching the existing import-defer semantics,
+    // relocated from GetModuleExportsList per proposal-deferred-reexports).
+    // EvaluateModuleSync re-throws cached evaluation errors for
+    // already-evaluated modules — calling it unconditionally preserves that.
+    if (m instanceof CyclicModuleRecord && O.Deferred) {
+      if (ReadyForSyncExecution(m, 'all') === Value.false) {
+        return Throw.TypeError('Module "$1" is not ready for synchronous execution', m.HostDefined?.specifier ?? '<anonymous module>');
+      }
+      Q(yield* EvaluateModuleSync(m, 'all'));
+    }
+    // After a deferred-namespace eval the exports list is unchanged; the spec
+    // checks exports membership next. For regular namespaces this is the
+    // first observation of the cached exports list (no side effects).
     if (!O.Exports.has(P as JSStringValue)) {
       return Value.undefined;
     }
-    // 5. Let m be O.[[Module]].
-    const m = O.Module;
-    // Trigger sync evaluation when the binding flows through a deferred re-export
-    // (regular namespace) or when the namespace itself is deferred.
-    if (m instanceof CyclicModuleRecord) {
-      let importedNames: ImportedNamesValue;
-      let triggers: boolean;
-      if (O.Deferred) {
-        importedNames = 'all';
-        triggers = m.Status !== 'evaluated' && m.Status !== 'evaluating-async';
-      } else {
-        importedNames = [P as JSStringValue];
-        const optionalRequests = m.GetOptionalIndirectExportsModuleRequests(importedNames);
-        triggers = optionalRequests.length > 0;
-      }
-      if (triggers) {
+    // For regular namespaces, trigger only when the requested binding flows
+    // through a deferred re-export (m.GetOptionalIndirectExportsModuleRequests
+    // returns the deferred sub-graph for « P »).
+    if (m instanceof CyclicModuleRecord && !O.Deferred) {
+      const importedNames: ImportedNamesValue = [P as JSStringValue];
+      const optionalRequests = m.GetOptionalIndirectExportsModuleRequests(importedNames);
+      if (optionalRequests.length > 0) {
         if (ReadyForSyncExecution(m, importedNames) === Value.false) {
           return Throw.TypeError('Module "$1" is not ready for synchronous execution', m.HostDefined?.specifier ?? '<anonymous module>');
         }
