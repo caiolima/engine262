@@ -36,6 +36,7 @@ import {
   InnerModuleEvaluation,
   InnerModuleLinking,
   InnerModuleLoading,
+  type PreviouslyImportedNamesEntry,
   SameValue,
   AsyncBlockStart,
   PromiseCapabilityRecord,
@@ -99,7 +100,7 @@ export abstract class AbstractModuleRecord {
 
   abstract ResolveExport(exportName: JSStringValue, resolveSet?: ResolveSetItem[]): 'ambiguous' | ResolvedBindingRecord | null;
 
-  abstract Link(): PlainCompletion<void>;
+  abstract Link(importedNames?: ImportedNamesValue): PlainCompletion<void>;
 
   abstract Evaluate(): Evaluator<PromiseObject>;
 
@@ -191,34 +192,40 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
     return pc.Promise;
   }
 
-  /** https://tc39.es/ecma262/#sec-moduledeclarationlinking */
-  Link() {
+  /** https://tc39.es/proposal-deferred-reexports/#sec-moduledeclarationlinking */
+  Link(importedNames: ImportedNamesValue = 'all'): PlainCompletion<void> {
     const module = this;
-    // 1. Assert: module.[[Status]] is unlinked, linked, evaluating-async, or evaluated.
     Assert(module.Status === 'unlinked' || module.Status === 'linked' || module.Status === 'evaluating-async' || module.Status === 'evaluated');
-    // 2. Let stack be a new empty List.
     const stack: CyclicModuleRecord[] = [];
-    // 3. Let result be Completion(InnerModuleLinking(module, stack, 0)).
-    const result = InnerModuleLinking(module, stack, 0);
-    // 5. If result is an abrupt completion, then
+    const previouslyImportedNames: PreviouslyImportedNamesEntry[] = [
+      { Module: module, ImportedNames: importedNames },
+    ];
+    const result = InnerModuleLinking(module, stack, 0, previouslyImportedNames);
     if (result instanceof AbruptCompletion) {
-      // a. For each Cyclic Module Record m of stack, do
       for (const m of stack) {
-        // i. Assert: m.[[Status]] is linking.
         Assert(m.Status === 'linking');
-        // ii. Set m.[[Status]] to unlinked.
         m.Status = 'unlinked';
       }
-      // b. Assert: module.[[Status]] is unlinked.
       Assert(module.Status === 'unlinked');
-      // c. Return result.
       return result;
     }
-    // 6. Assert: module.[[Status]] is linked, evaluating-async, or evaluated.
     Assert(module.Status === 'linked' || module.Status === 'evaluating-async' || module.Status === 'evaluated');
-    // 7. Assert: stack is empty.
     Assert(stack.length === 0);
-    // 8. Return unused.
+
+    // Step matching spec: link optional indirect requests after main link.
+    const optionalIndirectRequests = module.GetOptionalIndirectExportsModuleRequests(importedNames);
+    for (const request of optionalIndirectRequests) {
+      const requiredModule = GetImportedModule(module, request);
+      Assert(
+        !(requiredModule instanceof CyclicModuleRecord)
+        || requiredModule.Status === 'unlinked' || requiredModule.Status === 'linked'
+        || requiredModule.Status === 'evaluating-async' || requiredModule.Status === 'evaluated',
+      );
+      if (requiredModule instanceof CyclicModuleRecord && requiredModule.Status === 'unlinked') {
+        Q(requiredModule.Link(request.ImportedNames));
+      }
+    }
+
     return NormalCompletion(undefined);
   }
 

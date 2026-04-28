@@ -251,8 +251,13 @@ export function BuildLinkingList(
   }
 }
 
-/** https://tc39.es/ecma262/#sec-InnerModuleLinking */
-export function InnerModuleLinking(module: AbstractModuleRecord, stack: CyclicModuleRecord[], index: number): PlainCompletion<number> {
+/** https://tc39.es/proposal-deferred-reexports/#sec-InnerModuleLinking */
+export function InnerModuleLinking(
+  module: AbstractModuleRecord,
+  stack: CyclicModuleRecord[],
+  index: number,
+  previouslyImportedNames: PreviouslyImportedNamesEntry[],
+): PlainCompletion<number> {
   if (!(module instanceof CyclicModuleRecord)) {
     Q(module.Link());
     return index;
@@ -266,9 +271,12 @@ export function InnerModuleLinking(module: AbstractModuleRecord, stack: CyclicMo
   module.DFSAncestorIndex = index;
   index += 1;
   stack.push(module);
-  for (const required of module.RequestedModules) {
-    const requiredModule = GetImportedModule(module, required);
-    index = Q(InnerModuleLinking(requiredModule, stack, index));
+
+  const linkingList: AbstractModuleRecord[] = [];
+  BuildLinkingList(linkingList, module, module.RequestedModules, previouslyImportedNames);
+
+  for (const requiredModule of linkingList) {
+    index = Q(InnerModuleLinking(requiredModule, stack, index, previouslyImportedNames));
     if (requiredModule instanceof CyclicModuleRecord) {
       Assert(requiredModule.Status === 'linking' || requiredModule.Status === 'linked' || requiredModule.Status === 'evaluating-async' || requiredModule.Status === 'evaluated');
       Assert((requiredModule.Status === 'linking') === stack.includes(requiredModule));
