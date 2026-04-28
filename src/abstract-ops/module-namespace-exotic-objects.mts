@@ -33,7 +33,7 @@ import {
   EvaluateModuleSync,
   ReadyForSyncExecution,
 } from './all.mts';
-import { Throw, type PlainEvaluator } from '#self';
+import { Throw } from '#self';
 
 export interface ModuleNamespaceObject extends ExoticObject {
   readonly Module: AbstractModuleRecord;
@@ -64,7 +64,7 @@ const InternalMethods = {
     if (IsSymbolLikeNamespaceKey(P, O)) {
       return OrdinaryGetOwnProperty(O, P);
     }
-    const exports = Q(yield* GetModuleExportsList(O));
+    const exports = GetModuleExportsList(O);
     if (!exports.has(P as JSStringValue)) {
       return Value.undefined;
     }
@@ -110,7 +110,7 @@ const InternalMethods = {
     if (IsSymbolLikeNamespaceKey(P, O)) {
       return yield* OrdinaryHasProperty(O, P);
     }
-    const exports = Q(yield* GetModuleExportsList(O));
+    const exports = GetModuleExportsList(O);
     if (exports.has(P as JSStringValue)) {
       return Value.true;
     }
@@ -190,7 +190,7 @@ const InternalMethods = {
     if (IsSymbolLikeNamespaceKey(P, O)) {
       return Q(yield* OrdinaryDelete(O, P));
     }
-    const exports = Q(yield* GetModuleExportsList(O));
+    const exports = GetModuleExportsList(O);
     if (exports.has(P as JSStringValue)) {
       return Value.false;
     }
@@ -200,7 +200,7 @@ const InternalMethods = {
     const O = this;
 
     let exports;
-    exports = Q(yield* GetModuleExportsList(O));
+    exports = GetModuleExportsList(O);
     if (O.Deferred && exports.has('then')) {
       exports = [...exports].filter((x) => x.stringValue() !== 'then');
     }
@@ -285,14 +285,10 @@ function IsSymbolLikeNamespaceKey(P: PropertyKeyValue, ns: ModuleNamespaceObject
   return false;
 }
 
-/** https://tc39.es/proposal-defer-import-eval/#sec-GetModuleExportsList */
-function* GetModuleExportsList(O: ModuleNamespaceObject): PlainEvaluator<JSStringSet> {
-  if (O.Deferred) {
-    const m = O.Module;
-    if (ReadyForSyncExecution(m) === Value.false) {
-      return Throw.TypeError('Module "$1" is not ready for synchronous execution', m.HostDefined?.specifier ?? '<anonymous module>');
-    }
-    Q(yield* EvaluateModuleSync(m));
-  }
+/** https://tc39.es/proposal-deferred-reexports/#sec-GetModuleExportsList */
+function GetModuleExportsList(O: ModuleNamespaceObject): JSStringSet {
+  // Per proposal-deferred-reexports: only [[Get]] triggers EvaluateModuleSync.
+  // [[GetOwnProperty]], [[HasProperty]], [[OwnPropertyKeys]], [[Delete]] all go
+  // through this helper and must observe the cached exports list without side effects.
   return O.Exports;
 }
