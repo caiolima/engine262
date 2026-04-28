@@ -463,6 +463,20 @@ export function GatherAsynchronousTransitiveDependencies(module: ModuleRecord, s
   return result;
 }
 
+/** https://tc39.es/proposal-deferred-reexports/#sec-gatherasynchronoustransitivedependenciesforrequests */
+export function GatherAsynchronousTransitiveDependenciesForRequests(
+  referrer: CyclicModuleRecord,
+  requests: readonly ModuleRequestRecord[],
+  seen: Set<ModuleRecord> = new Set(),
+): ModuleRecord[] {
+  const result: ModuleRecord[] = [];
+  for (const request of requests) {
+    const dep = GetImportedModule(referrer, request);
+    ListAppendUnique(result, GatherAsynchronousTransitiveDependencies(dep, seen));
+  }
+  return result;
+}
+
 /** https://tc39.es/ecma262/#sec-execute-async-module */
 function* ExecuteAsyncModule(module: CyclicModuleRecord) {
   // 1. Assert: module.[[Status]] is evaluating or evaluating-async.
