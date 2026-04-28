@@ -8,6 +8,7 @@ import { JSStringValue, ObjectValue, Value } from './value.mts';
 import { Q, type PlainCompletion } from './completion.mts';
 import {
   ModuleRequests,
+  type ModuleRequestRecord,
   ImportEntries,
   ExportEntries,
   ImportedLocalNames,
@@ -145,6 +146,9 @@ export function ParseModule(sourceText: string, realm: Realm, hostDefined: Modul
   const localExportEntries = [];
   // 9. Let starExportEntries be a new empty List.
   const starExportEntries = [];
+  // OptionalIndirectExportEntries: deferred re-exports (`export defer ... from`).
+  // https://tc39.es/proposal-deferred-reexports/
+  const optionalIndirectExportEntries = [];
   // 10. Let exportEntries be ExportEntries of body.
   const exportEntries = ExportEntries(body);
   // 11. For each ExportEntry Record ee in exportEntries, do
@@ -170,6 +174,10 @@ export function ParseModule(sourceText: string, realm: Realm, hostDefined: Modul
     } else if (ee.ImportName && ee.ImportName === 'all-but-default' && ee.ExportName === Value.null) { // b. Else if ee.[[ImportName]] is ~all-but-default~ and ee.[[ExportName]] is null, then
       // i. Append ee to starExportEntries.
       starExportEntries.push(ee);
+    } else if ((ee.ModuleRequest as ModuleRequestRecord).Phase === 'defer') {
+      // Deferred re-exports go into OptionalIndirectExportEntries, NOT IndirectExportEntries.
+      // This keeps them out of InitializeEnvironment's eager validation loop.
+      optionalIndirectExportEntries.push(ee);
     } else { // c. Else,
       // i. Append ee to indirectExportEntries.
       indirectExportEntries.push(ee);
@@ -192,6 +200,7 @@ export function ParseModule(sourceText: string, realm: Realm, hostDefined: Modul
     LocalExportEntries: localExportEntries,
     IndirectExportEntries: indirectExportEntries,
     StarExportEntries: starExportEntries,
+    OptionalIndirectExportEntries: optionalIndirectExportEntries,
     CycleRoot: undefined,
     HasTLA: body.hasTopLevelAwait ? Value.true : Value.false,
     AsyncEvaluationOrder: 'unset',

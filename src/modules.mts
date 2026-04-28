@@ -36,7 +36,6 @@ import {
   InnerModuleEvaluation,
   InnerModuleLinking,
   InnerModuleLoading,
-  type PreviouslyImportedNamesEntry,
   SafePerformPromiseAll,
   SameValue,
   AsyncBlockStart,
@@ -187,7 +186,6 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
     const state = new GraphLoadingState({
       PromiseCapability: pc,
       HostDefined: hostDefined,
-      PreviouslyImportedNames: [{ Module: module, ImportedNames: importedNames }],
     });
     InnerModuleLoading(state, module, importedNames);
     return pc.Promise;
@@ -198,10 +196,7 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
     const module = this;
     Assert(module.Status === 'unlinked' || module.Status === 'linked' || module.Status === 'evaluating-async' || module.Status === 'evaluated');
     const stack: CyclicModuleRecord[] = [];
-    const previouslyImportedNames: PreviouslyImportedNamesEntry[] = [
-      { Module: module, ImportedNames: importedNames },
-    ];
-    const result = InnerModuleLinking(module, stack, 0, previouslyImportedNames);
+    const result = InnerModuleLinking(module, stack, 0);
     if (result instanceof AbruptCompletion) {
       for (const m of stack) {
         Assert(m.Status === 'linking');
@@ -315,7 +310,7 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
   }
 }
 
-export type SourceTextModuleRecordInit = CyclicModuleRecordInit & Pick<SourceTextModuleRecord, 'ImportMeta' | 'ECMAScriptCode' | 'Context' | 'ImportEntries' | 'LocalExportEntries' | 'IndirectExportEntries' | 'StarExportEntries'>;
+export type SourceTextModuleRecordInit = CyclicModuleRecordInit & Pick<SourceTextModuleRecord, 'ImportMeta' | 'ECMAScriptCode' | 'Context' | 'ImportEntries' | 'LocalExportEntries' | 'IndirectExportEntries' | 'StarExportEntries'> & Partial<Pick<SourceTextModuleRecord, 'OptionalIndirectExportEntries'>>;
 /** https://tc39.es/ecma262/#sec-source-text-module-records */
 export class SourceTextModuleRecord extends CyclicModuleRecord {
   ImportMeta: ObjectValue | undefined;
@@ -332,6 +327,9 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
 
   readonly StarExportEntries: readonly ExportEntry[];
 
+  /** https://tc39.es/proposal-deferred-reexports/ — deferred re-export entries (`export defer ... from`). */
+  readonly OptionalIndirectExportEntries: readonly ExportEntry[];
+
   constructor(init: SourceTextModuleRecordInit) {
     super(init);
 
@@ -342,6 +340,7 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
     this.LocalExportEntries = init.LocalExportEntries;
     this.IndirectExportEntries = init.IndirectExportEntries;
     this.StarExportEntries = init.StarExportEntries;
+    this.OptionalIndirectExportEntries = init.OptionalIndirectExportEntries ?? [];
   }
 
   /** https://tc39.es/ecma262/#sec-getexportednames */
@@ -371,8 +370,9 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
       // c. Append e.[[ExportName]] to exportedNames.
       exportedNames.push(e.ExportName);
     }
-    // 7. For each ExportEntry Record e in module.[[IndirectExportEntries]], do
-    for (const e of module.IndirectExportEntries) {
+    // 7. For each ExportEntry Record e in [[IndirectExportEntries]] ++ [[OptionalIndirectExportEntries]], do
+    //    https://tc39.es/proposal-deferred-reexports/#sec-getexportednames
+    for (const e of [...module.IndirectExportEntries, ...module.OptionalIndirectExportEntries]) {
       // a. Assert: module imports a specific binding for this export.
       // b. Assert: e.[[ExportName]] is not null.
       Assert(!(e.ExportName instanceof NullValue));
@@ -433,8 +433,10 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
         });
       }
     }
-    // 6. For each ExportEntry Record e in module.[[IndirectExportEntries]], do
-    for (const e of module.IndirectExportEntries) {
+    // 6. For each ExportEntry Record e in [[IndirectExportEntries]] ++ [[OptionalIndirectExportEntries]], do
+    //    https://tc39.es/proposal-deferred-reexports/#sec-resolveexport
+    const allIndirectEntries = [...module.IndirectExportEntries, ...module.OptionalIndirectExportEntries];
+    for (const e of allIndirectEntries) {
       // a. If SameValue(exportName, e.[[ExportName]]) is true, then
       if (SameValue(exportName, e.ExportName) === Value.true) {
         // i. Let importedModule be GetImportedModule(module, e.[[ModuleRequest]]).
@@ -516,12 +518,9 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
   /** https://tc39.es/proposal-deferred-reexports/#sec-source-text-module-record-getoptionalindirectexportsmodulerequests */
   override GetOptionalIndirectExportsModuleRequests(importedNames: ImportedNamesValue): readonly ModuleRequestRecord[] {
     const result: ModuleRequestRecord[] = [];
-    for (const e of this.IndirectExportEntries) {
-      const request = e.ModuleRequest as ModuleRequestRecord | undefined;
-      if (request === undefined || request.Phase !== 'defer') {
-        continue;
-      }
-      const exportName = e.ExportName;
+    for (const oie of this.OptionalIndirectExportEntries) {
+      const request = oie.ModuleRequest as ModuleRequestRecord;
+      const exportName = oie.ExportName;
       if (!(exportName instanceof JSStringValue)) {
         continue;
       }

@@ -256,7 +256,6 @@ export function InnerModuleLinking(
   module: AbstractModuleRecord,
   stack: CyclicModuleRecord[],
   index: number,
-  previouslyImportedNames: PreviouslyImportedNamesEntry[],
 ): PlainCompletion<number> {
   if (!(module instanceof CyclicModuleRecord)) {
     Q(module.Link());
@@ -272,11 +271,13 @@ export function InnerModuleLinking(
   index += 1;
   stack.push(module);
 
+  // BuildLinkingList tracks previously-imported names within a single call,
+  // not threaded across recursive InnerModuleLinking invocations — see spec.
   const linkingList: AbstractModuleRecord[] = [];
-  BuildLinkingList(linkingList, module, module.RequestedModules, previouslyImportedNames);
+  BuildLinkingList(linkingList, module, module.RequestedModules, []);
 
   for (const requiredModule of linkingList) {
-    index = Q(InnerModuleLinking(requiredModule, stack, index, previouslyImportedNames));
+    index = Q(InnerModuleLinking(requiredModule, stack, index));
     if (requiredModule instanceof CyclicModuleRecord) {
       Assert(requiredModule.Status === 'linking' || requiredModule.Status === 'linked' || requiredModule.Status === 'evaluating-async' || requiredModule.Status === 'evaluated');
       Assert((requiredModule.Status === 'linking') === stack.includes(requiredModule));
@@ -460,7 +461,15 @@ export function BuildEvaluationList(
   for (const request of moduleRequests) {
     const requiredModule = GetImportedModule(referrer, request);
     if (request.Phase === 'defer') {
+      // First add async transitive deps (so they evaluate before the dep itself
+      // in TLA cycles), then add the deferred dep itself. This eagerly evaluates
+      // sync deferred deps for named-import consumers — matches phase 2a's
+      // intent that `import { x } from barrel` over `export defer { x } from dep`
+      // produces dep.x's value at access time without phase 2b's [[Get]] hook.
       ListAppendUnique(evaluationList, GatherAsynchronousTransitiveDependencies(requiredModule));
+      if (!evaluationList.includes(requiredModule)) {
+        evaluationList.push(requiredModule);
+      }
     } else if (!evaluationList.includes(requiredModule)) {
       evaluationList.push(requiredModule);
     }
