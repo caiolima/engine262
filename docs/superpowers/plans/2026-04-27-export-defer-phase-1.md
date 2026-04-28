@@ -1,5 +1,7 @@
 # `export defer` — Phase 1 Implementation Plan (syntax + ModuleRequests plumbing)
 
+> **Historical note:** this plan was executed as written, with one in-flight correction: the test262 feature name turned out to be `export-defer`, not `deferred-reexports` as PR 5033's title implied, so the engine262 flag was renamed to match. References to `deferred-reexports` below should be read as `export-defer` for the engine262 flag and the test262 features-file mapping. The proposal name (https://github.com/tc39/proposal-deferred-reexports) is unchanged.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement parser, early errors, and ModuleRequest-record plumbing for the `export defer` re-export syntax from the [Deferred Re-exports proposal](https://github.com/tc39/proposal-deferred-reexports), behind a `deferred-reexports` feature flag. Behavior-preserving: deferred sources still load and evaluate eagerly; only the syntax surface and the static-semantics data model change.

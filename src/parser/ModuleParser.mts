@@ -149,7 +149,7 @@ export abstract class ModuleParser extends StatementParser {
     let isDefer = false;
     if (
       !node.default
-      && surroundingAgent.feature('deferred-reexports')
+      && surroundingAgent.feature('export-defer')
       && this.test('defer')
       && (this.testAhead(Token.MUL) || this.testAhead(Token.LBRACE))
     ) {

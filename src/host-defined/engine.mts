@@ -91,7 +91,7 @@ export const FEATURES = ([
   },
   {
     name: 'Deferred Re-exports',
-    flag: 'deferred-reexports',
+    flag: 'export-defer',
     url: 'https://github.com/tc39/proposal-deferred-reexports',
     enableInPlayground: true,
   },

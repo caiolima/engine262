@@ -40,11 +40,11 @@ Behavior-preserving. Deferred sources still load and evaluate eagerly. Only the 
 
 | File | Change |
 |---|---|
-| `src/host-defined/engine.mts` (FEATURES array) | Add `{ name: 'Deferred Re-exports', flag: 'deferred-reexports', url: 'https://github.com/tc39/proposal-deferred-reexports', enableInPlayground: true }`. |
+| `src/host-defined/engine.mts` (FEATURES array) | Add `{ name: 'Deferred Re-exports', flag: 'export-defer', url: 'https://github.com/tc39/proposal-deferred-reexports', enableInPlayground: true }`. |
 | `src/parser/ModuleParser.mts` (`parseExportDeclaration`, ~line 143) | After `expect(EXPORT)` and `eat(DEFAULT)`, recognize the `defer` contextual keyword. Gate on the feature flag. Set `node.Phase = 'defer'`. Constrain the following form to `*` `as` `ModuleExportName` `from ...` or `{ ... }` `from ...`. Default else-branch: `node.Phase = 'evaluation'`. |
 | `src/parser/ParseNode.mts` (`ExportDeclaration_NamedFrom`, ~line 2165) | Add `readonly Phase: 'defer' \| 'evaluation';`. |
 | `src/static-semantics/ModuleRequests.mts` (line 92) | Replace hard-coded `Phase: 'evaluation'` with `node.Phase ?? 'evaluation'`. |
-| `test/test262/features` | Add `deferred-reexports = deferred-reexports`. |
+| `test/test262/features` | Add `export-defer = export-defer`. |
 | `.gitmodules` / submodule pin | Point `test/test262/test262` at a local fork branch that merges PRs 5033/5034/5035 onto upstream `main`. |
 
 **Early errors enforced**
@@ -129,7 +129,7 @@ No new code expected. `import(specifier, { phase: "defer" })` already routes thr
 
 **Deliverables**
 
-- Run `npm run test:test262 -- --features=deferred-reexports,import-defer`. Expect green.
+- Run `npm run test:test262 -- --features=export-defer,import-defer`. Expect green.
 - One composition test: `import defer * as ns from "reexporter"` where `reexporter` contains `export defer { x } from "C"`. Reading `ns.x` evaluates C exactly once. If covered upstream, no in-repo test; otherwise a one-off in `test/engine262/module.test.mts`.
 
 If a gap surfaces, fix in place and add a regression test. Otherwise phase 3 is a no-op PR.
@@ -137,9 +137,9 @@ If a gap surfaces, fix in place and add a regression test. Otherwise phase 3 is 
 ## Testing strategy
 
 - Submodule `test/test262/test262` is pinned to a local fork branch: upstream `tc39/test262 main` plus cherry-picked PRs 5033, 5034, 5035.
-- `test/test262/features` carries `deferred-reexports = deferred-reexports`.
+- `test/test262/features` carries `export-defer = export-defer`.
 - Inner loop per phase: `bash scripts/test262.sh language/export/export-defer/<area>`.
-- Full loop: `npm run test:test262 -- --features=deferred-reexports`.
+- Full loop: `npm run test:test262 -- --features=export-defer`.
 - When upstream merges any of the three PRs, bump the submodule pin; no migration work.
 - Hand-ported in-repo tests (`test/engine262/*.test.mts`) are *not* added speculatively. The repo's precedent for module-defer features (set by import-defer #295, #342) is to lean entirely on test262. One-off in-repo tests are added only when a gap appears.
 
