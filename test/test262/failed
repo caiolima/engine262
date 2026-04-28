@@ -10,6 +10,11 @@
 ; https://github.com/tc39/ecma262/issues/3592
 built-ins/RegExp/regexp-modifiers/add-ignoreCase-affects-slash-upper-p.js
 
+# Upstream test bug in tc39/test262 PR 5033: dep_FIXTURE.js is a JS module but
+# the test imports it with { type: "json" }. Parser correctly accepts the
+# syntax; link-time JSON parsing of the JS fixture is what fails.
+language/export/export-defer/syntax/valid-import-attributes.js
+
 
 # To be investigated
 ## Infinite recursion

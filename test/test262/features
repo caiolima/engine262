@@ -6,7 +6,7 @@
 # import-defer = import-defer
 decorators = decorators
 Temporal = temporal
-deferred-reexports = deferred-reexports
+export-defer = deferred-reexports
 
 # To be implemented
 -arraybuffer-transfer
