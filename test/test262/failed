@@ -15,6 +15,28 @@ built-ins/RegExp/regexp-modifiers/add-ignoreCase-affects-slash-upper-p.js
 # syntax; link-time JSON parsing of the JS fixture is what fails.
 language/export/export-defer/syntax/valid-import-attributes.js
 
+# tc39/test262 import-defer fixtures encode the pre-PR-5035 semantics where
+# any namespace internal method ([[HasProperty]], [[OwnPropertyKeys]],
+# [[Delete]], [[GetOwnProperty]], [[DefineOwnProperty]]) triggered evaluation
+# of a deferred namespace via GetModuleExportsList. The proposal-deferred-
+# reexports update (test262 PR 5035) restricts the trigger to [[Get]] only;
+# these tests need to be updated upstream to match the new spec text.
+# Engine262 implements the new semantics — see commit "module-namespace:
+# GetModuleExportsList becomes side-effect-free".
+language/import/import-defer/evaluation-triggers/trigger-exported-string-delete.js
+language/import/import-defer/evaluation-triggers/trigger-exported-string-hasProperty-in-prototype.js
+language/import/import-defer/evaluation-triggers/trigger-exported-string-hasProperty.js
+language/import/import-defer/evaluation-triggers/trigger-not-exported-string-defineOwnProperty.js
+language/import/import-defer/evaluation-triggers/trigger-not-exported-string-delete.js
+language/import/import-defer/evaluation-triggers/trigger-not-exported-string-getOwnProperty.js
+language/import/import-defer/evaluation-triggers/trigger-not-exported-string-hasProperty-in-prototype.js
+language/import/import-defer/evaluation-triggers/trigger-not-exported-string-hasProperty.js
+language/import/import-defer/evaluation-triggers/trigger-not-exported-string-super-property-define.js
+language/import/import-defer/evaluation-triggers/trigger-not-exported-string-super-property-set-exported.js
+language/import/import-defer/evaluation-triggers/trigger-ownPropertyKey-names.js
+language/import/import-defer/evaluation-triggers/trigger-ownPropertyKeys-symbols.js
+language/import/import-defer/evaluation-triggers/trigger-ownPropertyKeys.js
+
 
 # To be investigated
 ## Infinite recursion
