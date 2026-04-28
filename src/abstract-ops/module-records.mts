@@ -40,8 +40,12 @@ import {
 
 const DEFAULT_NAME = Value('default');
 
-function isAllNames(v: ImportedNamesValue): v is 'all' { return v === 'all'; }
-function isAllButDefault(v: ImportedNamesValue): v is 'all-but-default' { return v === 'all-but-default'; }
+function isAllNames(v: ImportedNamesValue): v is 'all' {
+  return v === 'all';
+}
+function isAllButDefault(v: ImportedNamesValue): v is 'all-but-default' {
+  return v === 'all-but-default';
+}
 function jsStringEquals(a: JSStringValue, b: JSStringValue): boolean {
   return a === b || a.stringValue() === b.stringValue();
 }

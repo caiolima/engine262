@@ -227,7 +227,7 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
 
   /** https://tc39.es/proposal-deferred-reexports/#sec-moduleevaluation */
   * Evaluate(importedNames: ImportedNamesValue = []): Evaluator<PromiseObject> {
-    let module: CyclicModuleRecord = this;
+    const module: CyclicModuleRecord = this;
 
     Assert((function getModules(module: AbstractModuleRecord, list: CyclicModuleRecord[]) {
       if (!(module instanceof CyclicModuleRecord) || list.includes(module)) {
