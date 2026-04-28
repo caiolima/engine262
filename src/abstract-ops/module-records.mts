@@ -33,10 +33,92 @@ import {
   HostGetSupportedImportAttributes,
   ModuleRequestsEqual,
   ReadyForSyncExecution,
-  type Arguments, type ImportAttributeRecord, type ModuleRequestRecord, type PlainEvaluator, type ScriptRecord, type SourceTextModuleRecord,
+  type Arguments, type ImportAttributeRecord, type ImportedNamesValue, type ModuleRequestRecord, type PlainEvaluator, type ScriptRecord, type SourceTextModuleRecord,
   Throw,
   JSStringValue,
 } from '#self';
+
+const DEFAULT_NAME = Value('default');
+
+function isAllNames(v: ImportedNamesValue): v is 'all' { return v === 'all'; }
+function isAllButDefault(v: ImportedNamesValue): v is 'all-but-default' { return v === 'all-but-default'; }
+function jsStringEquals(a: JSStringValue, b: JSStringValue): boolean {
+  return a === b || a.stringValue() === b.stringValue();
+}
+function listIncludesString(list: readonly JSStringValue[], name: JSStringValue): boolean {
+  return list.some((n) => jsStringEquals(n, name));
+}
+
+/** https://tc39.es/proposal-deferred-reexports/#sec-mergeimportednames */
+export function MergeImportedNames(a: ImportedNamesValue, b: ImportedNamesValue): ImportedNamesValue {
+  if (isAllNames(a) || isAllNames(b)) {
+    return 'all';
+  }
+  if (isAllButDefault(a) && isAllButDefault(b)) {
+    return 'all-but-default';
+  }
+  if (isAllButDefault(a)) {
+    return listIncludesString(b as readonly JSStringValue[], DEFAULT_NAME) ? 'all' : 'all-but-default';
+  }
+  if (isAllButDefault(b)) {
+    return listIncludesString(a as readonly JSStringValue[], DEFAULT_NAME) ? 'all' : 'all-but-default';
+  }
+  // Both are lists. Union.
+  const result: JSStringValue[] = [...(a as readonly JSStringValue[])];
+  for (const name of b as readonly JSStringValue[]) {
+    if (!listIncludesString(result, name)) {
+      result.push(name);
+    }
+  }
+  return result;
+}
+
+/** https://tc39.es/proposal-deferred-reexports/#sec-excludeimportednames */
+export function ExcludeImportedNames(a: ImportedNamesValue, b: ImportedNamesValue): ImportedNamesValue {
+  if (isAllNames(b)) {
+    return [];
+  }
+  if (isAllNames(a)) {
+    if (isAllButDefault(b)) {
+      return [DEFAULT_NAME];
+    }
+    // a = all, b = list. The result is "all minus a finite set"; the spec keeps
+    // this opaque. We return 'all' — downstream filters re-evaluate against
+    // actual [[Exports]].
+    return 'all';
+  }
+  if (isAllButDefault(a)) {
+    if (isAllButDefault(b)) {
+      return [];
+    }
+    // a = all-but-default, b = list. Subtract list; keep as 'all-but-default'.
+    // Downstream filters re-evaluate against actual [[Exports]].
+    return 'all-but-default';
+  }
+  const aList = a as readonly JSStringValue[];
+  const result: JSStringValue[] = [];
+  for (const name of aList) {
+    if (isAllButDefault(b)) {
+      // 'all-but-default' contains every name except "default"; the difference
+      // is the intersection of `a` with {"default"}.
+      if (jsStringEquals(name, DEFAULT_NAME)) {
+        result.push(name);
+      }
+    } else if (!listIncludesString(b as readonly JSStringValue[], name)) {
+      result.push(name);
+    }
+  }
+  return result;
+}
+
+/** https://tc39.es/proposal-deferred-reexports/#sec-listappendunique */
+export function ListAppendUnique<T>(target: T[], items: Iterable<T>, equals: (a: T, b: T) => boolean = (a, b) => a === b): void {
+  for (const item of items) {
+    if (!target.some((existing) => equals(existing, item))) {
+      target.push(item);
+    }
+  }
+}
 
 /** https://tc39.es/ecma262/#graphloadingstate-record */
 export class GraphLoadingState {
