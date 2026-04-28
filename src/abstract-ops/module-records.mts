@@ -463,6 +463,35 @@ export function GatherAsynchronousTransitiveDependencies(module: ModuleRecord, s
   return result;
 }
 
+/** https://tc39.es/proposal-deferred-reexports/#sec-buildevaluationlist */
+export function BuildEvaluationList(
+  evaluationList: ModuleRecord[],
+  referrer: CyclicModuleRecord,
+  moduleRequests: readonly ModuleRequestRecord[],
+): void {
+  for (const request of moduleRequests) {
+    const requiredModule = GetImportedModule(referrer, request);
+    if (request.Phase === 'defer') {
+      ListAppendUnique(evaluationList, GatherAsynchronousTransitiveDependencies(requiredModule));
+    } else if (!evaluationList.includes(requiredModule)) {
+      evaluationList.push(requiredModule);
+    }
+    if (requiredModule instanceof CyclicModuleRecord) {
+      const importedNames = request.ImportedNames;
+      if (importedNames === 'all') {
+        // import * over a deferred re-exporter: only asynchronous transitive
+        // deps of `export defer` sources evaluate here. Synchronous deps are
+        // deferred to module-namespace [[Get]] (phase 2b).
+        const allOptionalIndirectRequests = requiredModule.GetOptionalIndirectExportsModuleRequests(importedNames);
+        ListAppendUnique(evaluationList, GatherAsynchronousTransitiveDependenciesForRequests(requiredModule, allOptionalIndirectRequests, new Set()));
+      } else {
+        const optionalIndirectRequests = requiredModule.GetOptionalIndirectExportsModuleRequests(importedNames);
+        BuildEvaluationList(evaluationList, requiredModule, optionalIndirectRequests);
+      }
+    }
+  }
+}
+
 /** https://tc39.es/proposal-deferred-reexports/#sec-gatherasynchronoustransitivedependenciesforrequests */
 export function GatherAsynchronousTransitiveDependenciesForRequests(
   referrer: CyclicModuleRecord,
