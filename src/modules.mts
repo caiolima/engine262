@@ -46,6 +46,7 @@ import {
 } from '#self';
 import {
   type ImportAttributeRecord,
+  type ImportedNamesValue,
   type ModuleRequestRecord,
   type PlainCompletion, type PromiseObject, ModuleEnvironmentRecord,
 } from '#self';
@@ -101,6 +102,11 @@ export abstract class AbstractModuleRecord {
   abstract Link(): PlainCompletion<void>;
 
   abstract Evaluate(): Evaluator<PromiseObject>;
+
+  /** https://tc39.es/proposal-deferred-reexports/#sec-getoptionalindirectexportsmodulerequests */
+  GetOptionalIndirectExportsModuleRequests(_importedNames: ImportedNamesValue): readonly ModuleRequestRecord[] {
+    return [];
+  }
 
   readonly Realm: Realm;
 
@@ -501,6 +507,33 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
     }
     // 11. Return starResolution.
     return starResolution;
+  }
+
+  /** https://tc39.es/proposal-deferred-reexports/#sec-source-text-module-record-getoptionalindirectexportsmodulerequests */
+  override GetOptionalIndirectExportsModuleRequests(importedNames: ImportedNamesValue): readonly ModuleRequestRecord[] {
+    const result: ModuleRequestRecord[] = [];
+    for (const e of this.IndirectExportEntries) {
+      const request = e.ModuleRequest as ModuleRequestRecord | undefined;
+      if (request === undefined || request.Phase !== 'defer') {
+        continue;
+      }
+      const exportName = e.ExportName;
+      if (!(exportName instanceof JSStringValue)) {
+        continue;
+      }
+      let included: boolean;
+      if (importedNames === 'all') {
+        included = true;
+      } else if (importedNames === 'all-but-default') {
+        included = exportName.stringValue() !== 'default';
+      } else {
+        included = (importedNames as readonly JSStringValue[]).some((n) => n.stringValue() === exportName.stringValue());
+      }
+      if (included && !result.includes(request)) {
+        result.push(request);
+      }
+    }
+    return result;
   }
 
   /** https://tc39.es/ecma262/#sec-source-text-module-record-initialize-environment */
