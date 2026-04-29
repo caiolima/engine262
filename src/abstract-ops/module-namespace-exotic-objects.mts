@@ -32,7 +32,6 @@ import {
   GetModuleNamespace, R,
   type ExoticObject,
   EvaluateModuleSync,
-  ReadyForSyncExecution,
 } from './all.mts';
 import { Throw } from '#self';
 
@@ -121,43 +120,28 @@ const InternalMethods = {
   * Get(P, Receiver) {
     const O = this;
 
-    // 1. Assert: IsPropertyKey(P) is true.
+    // 1. If IsSymbolLikeNamespaceKey(P, O), return ! OrdinaryGet(O, P, Receiver).
     Assert(IsPropertyKey(P));
     if (IsSymbolLikeNamespaceKey(P, O)) {
-      return yield* OrdinaryGet(O, P, Receiver);
+      return X(yield* OrdinaryGet(O, P, Receiver));
     }
-    const m = O.Module;
-    // For deferred namespaces, [[Get]] of any non-symbol-like key forces full
-    // evaluation of the module (matching the existing import-defer semantics,
-    // relocated from GetModuleExportsList per proposal-deferred-reexports).
-    // EvaluateModuleSync re-throws cached evaluation errors for
-    // already-evaluated modules — calling it unconditionally preserves that.
-    if (m instanceof CyclicModuleRecord && O.Deferred) {
-      if (ReadyForSyncExecution(m, 'all') === Value.false) {
-        return Throw.TypeError('Module "$1" is not ready for synchronous execution', m.HostDefined?.specifier ?? '<anonymous module>');
-      }
-      Q(yield* EvaluateModuleSync(m, 'all'));
-    }
-    // After a deferred-namespace eval the exports list is unchanged; the spec
-    // checks exports membership next. For regular namespaces this is the
-    // first observation of the cached exports list (no side effects).
-    if (!O.Exports.has(P as JSStringValue)) {
+    // 2. Let exports be ? GetModuleExportsList(O).
+    const exports = Q(yield* GetModuleExportsList(O));
+    // 3. If exports does not contain P, return undefined.
+    if (!exports.has(P as JSStringValue)) {
       return Value.undefined;
     }
-    // For regular namespaces, trigger only when the requested binding flows
-    // through a deferred re-export (m.GetOptionalIndirectExportsModuleRequests
-    // returns the deferred sub-graph for « P »).
-    if (m instanceof CyclicModuleRecord && !O.Deferred) {
+    // 4. Let m be O.[[Module]].
+    const m = O.Module;
+    // 5. If m is a Cyclic Module Record and m.GetOptionalIndirectExportsModuleRequests(« P ») is not empty, then
+    if (m instanceof CyclicModuleRecord) {
       const importedNames: ImportedNamesValue = [P as JSStringValue];
-      const optionalRequests = m.GetOptionalIndirectExportsModuleRequests(importedNames);
-      if (optionalRequests.length > 0) {
-        if (ReadyForSyncExecution(m, importedNames) === Value.false) {
-          return Throw.TypeError('Module "$1" is not ready for synchronous execution', m.HostDefined?.specifier ?? '<anonymous module>');
-        }
+      if (m.GetOptionalIndirectExportsModuleRequests(importedNames).length > 0) {
+        // a. Perform ? EvaluateModuleSync(m, « P »).
         Q(yield* EvaluateModuleSync(m, importedNames));
       }
     }
-    // 6. Let binding be ! m.ResolveExport(P).
+    // 6. Let binding be m.ResolveExport(P).
     const binding = m.ResolveExport(P as JSStringValue);
     // 7. Assert: binding is a ResolvedBinding Record.
     Assert(binding instanceof ResolvedBindingRecord);
@@ -165,22 +149,23 @@ const InternalMethods = {
     const targetModule = binding.Module;
     // 9. Assert: targetModule is not undefined.
     Assert(!(targetModule instanceof UndefinedValue));
-    // 10. If binding.[[BindingName]] is ~namespace~, then
+    // 10. If binding.[[BindingName]] is namespace, then
     if (binding.BindingName === 'namespace') {
-      // a. Return ? GetModuleNamespace(targetModule).
+      // a. Return GetModuleNamespace(targetModule, evaluation).
       return Q(GetModuleNamespace(targetModule, 'evaluation'));
     }
-    // https://tc39.es/proposal-defer-import-eval/#sec-module-namespace-exotic-objects-get-p-receiver
+    // 11. If binding.[[BindingName]] is deferred-namespace, then
     if (binding.BindingName === 'deferred-namespace') {
+      // a. Return GetModuleNamespace(targetModule, defer).
       return Q(GetModuleNamespace(targetModule, 'defer'));
     }
-    // 11. Let targetEnv be targetModule.[[Environment]].
+    // 12. Let targetEnv be targetModule.[[Environment]].
     const targetEnv = targetModule.Environment;
-    // 12. If targetEnv is undefined, throw a ReferenceError exception.
+    // 13. If targetEnv is empty, throw a ReferenceError exception.
     if (!targetEnv) {
       return Throw.ReferenceError('$1 is not defined', P);
     }
-    // 13. Return ? targetEnv.GetBindingValue(binding.[[BindingName]], true).
+    // 14. Return ? targetEnv.GetBindingValue(binding.[[BindingName]], true).
     return Q(yield* targetEnv.GetBindingValue(binding.BindingName, Value.true));
   },
   * Set() {
@@ -290,14 +275,13 @@ function IsSymbolLikeNamespaceKey(P: PropertyKeyValue, ns: ModuleNamespaceObject
 
 /** https://tc39.es/proposal-deferred-reexports/#sec-GetModuleExportsList */
 function* GetModuleExportsList(O: ModuleNamespaceObject): PlainEvaluator<JSStringSet> {
+  // 1. If O.[[Deferred]] is true, then
   if (O.Deferred) {
+    // a. Let m be O.[[Module]].
     const m = O.Module;
-    if (m instanceof CyclicModuleRecord) {
-      if (ReadyForSyncExecution(m, 'all') === Value.false) {
-        return Throw.TypeError('Module "$1" is not ready for synchronous execution', m.HostDefined?.specifier ?? '<anonymous module>');
-      }
-      Q(yield* EvaluateModuleSync(m, 'all'));
-    }
+    // b. Perform ? EvaluateModuleSync(m).
+    Q(yield* EvaluateModuleSync(m));
   }
+  // 2. Return O.[[Exports]].
   return O.Exports;
 }

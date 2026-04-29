@@ -53,54 +53,76 @@ function listIncludesString(list: readonly JSStringValue[], name: JSStringValue)
   return list.some((n) => jsStringEquals(n, name));
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-mergeimportednames */
+/** https://tc39.es/proposal-deferred-reexports/#sec-MergeImportedNames */
 export function MergeImportedNames(a: ImportedNamesValue, b: ImportedNamesValue): ImportedNamesValue {
+  // 1. If a is all or b is all, return all.
   if (isAllNames(a) || isAllNames(b)) {
     return 'all';
   }
   if (isAllButDefault(a) && isAllButDefault(b)) {
     return 'all-but-default';
   }
+  // 2. If a is all-but-default and b is a List of Strings that contains "default", return all.
   if (isAllButDefault(a)) {
     return listIncludesString(b as readonly JSStringValue[], DEFAULT_NAME) ? 'all' : 'all-but-default';
   }
+  // 3. If b is all-but-default and a is a List of Strings that contains "default", return all.
+  // 4. If a is all-but-default or b is all-but-default, return all-but-default.
   if (isAllButDefault(b)) {
     return listIncludesString(a as readonly JSStringValue[], DEFAULT_NAME) ? 'all' : 'all-but-default';
   }
-  // Both are lists. Union.
+  // 5. Assert: a and b are a List of Strings.
+  // 6. Let merged be a copy of the List a.
   const result: JSStringValue[] = [...(a as readonly JSStringValue[])];
+  // 7. For each String name of b, do
   for (const name of b as readonly JSStringValue[]) {
+    // a. If merged does not contain name, then
+    //    i. Append name to merged.
     if (!listIncludesString(result, name)) {
       result.push(name);
     }
   }
+  // 8. Return merged.
   return result;
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-excludeimportednames */
+/** https://tc39.es/proposal-deferred-reexports/#sec-ExcludeImportedNames */
 export function ExcludeImportedNames(a: ImportedNamesValue, b: ImportedNamesValue): ImportedNamesValue {
+  // 1. If b is all, return « ».
   if (isAllNames(b)) {
     return [];
   }
+  // 2. If a is all, return all.
+  //    Engine262 deviation: when b is all-but-default, return [« "default" »]
+  //    instead — this is a tighter set than 'all' but still satisfies "guaranteed
+  //    to include all the names present in a but not in b". Tests rely on
+  //    avoiding eager evaluation of non-default exports.
   if (isAllNames(a)) {
     if (isAllButDefault(b)) {
       return [DEFAULT_NAME];
     }
     // a = all, b = list. The result is "all minus a finite set"; the spec keeps
-    // this opaque. We return 'all' — downstream filters re-evaluate against
+    // this opaque by returning 'all'. Downstream filters re-evaluate against
     // actual [[Exports]].
     return 'all';
   }
+  // 3. If a is all-but-default, then
   if (isAllButDefault(a)) {
+    // a. If b is all-but-default, return « ».
     if (isAllButDefault(b)) {
       return [];
     }
-    // a = all-but-default, b = list. Subtract list; keep as 'all-but-default'.
-    // Downstream filters re-evaluate against actual [[Exports]].
+    // b. Return all-but-default.
     return 'all-but-default';
   }
+  // 4. Assert: a is a List of Strings.
   const aList = a as readonly JSStringValue[];
   const result: JSStringValue[] = [];
+  // 5. If b is all-but-default, then
+  //    a. If a contains "default", return « "default" ».
+  //    b. Return « ».
+  // 6. Assert: b is a List of Strings.
+  // 7. Return a new List containing all the elements of a that are not also elements of b.
   for (const name of aList) {
     if (isAllButDefault(b)) {
       // 'all-but-default' contains every name except "default"; the difference
@@ -115,13 +137,16 @@ export function ExcludeImportedNames(a: ImportedNamesValue, b: ImportedNamesValu
   return result;
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-listappendunique */
+/** https://tc39.es/proposal-deferred-reexports/#sec-ListAppendUnique */
 export function ListAppendUnique<T>(target: T[], items: Iterable<T>, equals: (a: T, b: T) => boolean = (a, b) => a === b): void {
+  // 1. For each Record r of list2, do
   for (const item of items) {
+    // a. If list1 does not contain r, append r to list1.
     if (!target.some((existing) => equals(existing, item))) {
       target.push(item);
     }
   }
+  // 2. Return unused.
 }
 
 export interface PreviouslyImportedNamesEntry {
@@ -129,31 +154,44 @@ export interface PreviouslyImportedNamesEntry {
   ImportedNames: ImportedNamesValue;
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-getnewoptionalindirectexportsmodulerequests */
+/** https://tc39.es/proposal-deferred-reexports/#sec-GetNewOptionalIndirectExportsModuleRequests */
 export function GetNewOptionalIndirectExportsModuleRequests(
   module: AbstractModuleRecord,
   importedNames: ImportedNamesValue,
   previouslyImportedNames: PreviouslyImportedNamesEntry[],
 ): readonly ModuleRequestRecord[] {
+  // 1. Assert: previouslyImportedNames contains a Record whose [[Module]] field is module.
   const previous = previouslyImportedNames.find((p) => p.Module === module);
+  // 2. Let previous be the Record in previouslyImportedNames whose [[Module]] field is module.
   Assert(previous !== undefined);
+  // 3. Let newImportedNames be ExcludeImportedNames(importedNames, previous.[[ImportedNames]]).
   const newImportedNames = ExcludeImportedNames(importedNames, previous!.ImportedNames);
+  // 4. Set previous.[[ImportedNames]] to MergeImportedNames(previous.[[ImportedNames]], newImportedNames).
   previous!.ImportedNames = MergeImportedNames(previous!.ImportedNames, newImportedNames);
+  // 5. Return module.GetOptionalIndirectExportsModuleRequests(newImportedNames).
   return module.GetOptionalIndirectExportsModuleRequests(newImportedNames);
 }
 
-/** https://tc39.es/ecma262/#graphloadingstate-record */
+/** https://tc39.es/proposal-deferred-reexports/#graphloadingstate-record */
 export class GraphLoadingState {
+  // [[PromiseCapability]] — A PromiseCapability Record that is resolved when all dependencies are loaded.
   readonly PromiseCapability: PromiseCapabilityRecord;
 
+  // [[HostDefined]] — Host-provided value passed through to HostLoadImportedModule.
   readonly HostDefined?: ModuleRecordHostDefined;
 
+  // [[IsLoading]] — true while loading is in progress.
   IsLoading = true;
 
+  // [[Visited]] — Spec: a List of Records { [[Module]], [[ImportedNames]] }.
+  // engine262 splits this into a Set<CyclicModuleRecord> (visited modules) and
+  // PreviouslyImportedNames (per-module merged ImportedNames). Functionally equivalent.
   readonly Visited = new Set<CyclicModuleRecord>();
 
+  // [[PendingModulesCount]] — number of in-flight loads.
   PendingModules = 1;
 
+  // Companion to [[Visited]]: tracks the merged [[ImportedNames]] per module.
   readonly PreviouslyImportedNames: PreviouslyImportedNamesEntry[];
 
   constructor({ PromiseCapability, HostDefined, PreviouslyImportedNames = [] }: Pick<GraphLoadingState, 'PromiseCapability' | 'HostDefined'> & { PreviouslyImportedNames?: PreviouslyImportedNamesEntry[] }) {
@@ -168,91 +206,133 @@ export function InnerModuleLoading(state: GraphLoadingState, module: AbstractMod
   // 1. Assert: state.[[IsLoading]] is true.
   Assert(Boolean(state.IsLoading === true));
 
-  // 2. If module is a Cyclic Module Record, module.[[Status]] is new, and state.[[Visited]] does not contain module, then
-  if (module instanceof CyclicModuleRecord && module.Status === 'new' && !state.Visited.has(module)) {
-    // a. Append module to state.[[Visited]].
-    state.Visited.add(module);
-
-    // Ensure module has an entry in PreviouslyImportedNames.
-    if (!state.PreviouslyImportedNames.some((p) => p.Module === module)) {
-      state.PreviouslyImportedNames.push({ Module: module, ImportedNames: [] });
+  // 2. If module is a Cyclic Module Record, then
+  if (module instanceof CyclicModuleRecord) {
+    // a. Let requestsToLoad be a new empty List.
+    let requestsToLoad: readonly ModuleRequestRecord[] = [];
+    // b. If state.[[Visited]] does not contain a Record whose [[Module]] field is module, then
+    if (!state.Visited.has(module)) {
+      // i. If module.[[Status]] is new, set requestsToLoad to module.[[RequestedModules]].
+      if (module.Status === 'new') {
+        requestsToLoad = module.RequestedModules;
+      }
+      // ii. Append the Record { [[Module]]: module, [[ImportedNames]]: « » } to state.[[Visited]].
+      state.Visited.add(module);
+      if (!state.PreviouslyImportedNames.some((p) => p.Module === module)) {
+        state.PreviouslyImportedNames.push({ Module: module, ImportedNames: [] });
+      }
     }
-
-    // Compute optional indirect requests for the deferred re-exports the
-    // current consumer's importedNames touches.
+    // c. Let optionalIndirectRequests be GetNewOptionalIndirectExportsModuleRequests(module, importedNames, state.[[Visited]]).
     const optionalIndirectRequests = GetNewOptionalIndirectExportsModuleRequests(module, importedNames, state.PreviouslyImportedNames);
-    const requestsToLoad: readonly ModuleRequestRecord[] = [...module.RequestedModules, ...optionalIndirectRequests];
-
-    state.PendingModules += requestsToLoad.length;
-
+    // d. Set requestsToLoad to the list-concatenation of requestsToLoad and optionalIndirectRequests.
+    requestsToLoad = [...requestsToLoad, ...optionalIndirectRequests];
+    // e. Let requestedModulesCount be the number of elements in requestsToLoad.
+    const requestedModulesCount = requestsToLoad.length;
+    // f. Set state.[[PendingModulesCount]] to state.[[PendingModulesCount]] + requestedModulesCount.
+    state.PendingModules += requestedModulesCount;
+    // g. For each ModuleRequest Record request of requestsToLoad, do
     for (const request of requestsToLoad) {
+      // i. If AllImportAttributesSupported(request.[[Attributes]]) is false, then
       const invalidAttributeKey = AllImportAttributesSupported(request.Attributes);
       if (invalidAttributeKey) {
+        // 1. Let error be ThrowCompletion(a newly created SyntaxError object).
         const error = Throw.SyntaxError('Unsupported import attribute $1', invalidAttributeKey);
+        // 2. Perform ContinueModuleLoading(state, error, request.[[ImportedNames]]).
         ContinueModuleLoading(state, error);
       } else {
+        // ii. Else if module.[[LoadedModules]] contains a LoadedModuleRequest Record record such that ModuleRequestsKeyEqual(record, request) is true, then
         const record = getRecordWithSpecifier(module.LoadedModules, request);
         if (record !== undefined) {
+          // 1. Perform InnerModuleLoading(state, record.[[Module]], request.[[ImportedNames]]).
           InnerModuleLoading(state, record.Module, request.ImportedNames);
         } else {
+          // iii. Else,
+          // 1. Perform HostLoadImportedModule(module, request, state.[[HostDefined]], state).
+          // 2. NOTE: HostLoadImportedModule will call FinishLoadingImportedModule, which re-enters
+          //    the graph loading process through ContinueModuleLoading.
           HostLoadImportedModule(module, request, state.HostDefined, state);
         }
       }
-
+      // iv. If state.[[IsLoading]] is false, return unused.
       if (state.IsLoading === false) {
         return;
       }
     }
   }
 
+  // 3. Assert: state.[[PendingModulesCount]] ≥ 1.
   Assert(state.PendingModules >= 1);
+  // 4. Set state.[[PendingModulesCount]] to state.[[PendingModulesCount]] - 1.
   state.PendingModules -= 1;
+  // 5. If state.[[PendingModulesCount]] = 0, then
   if (state.PendingModules === 0) {
+    // a. Set state.[[IsLoading]] to false.
     state.IsLoading = false;
+    // b. For each Record loaded of state.[[Visited]], do
     for (const loaded of state.Visited) {
+      // i. If loaded.[[Module]].[[Status]] is new, set loaded.[[Module]].[[Status]] to unlinked.
       if (loaded.Status === 'new') {
         loaded.Status = 'unlinked';
       }
     }
+    // c. Perform ! Call(state.[[PromiseCapability]].[[Resolve]], undefined, « undefined »).
     X(Call(state.PromiseCapability.Resolve, Value.undefined, [Value.undefined]));
   }
+  // 6. Return unused.
 }
 
-/** https://tc39.es/ecma262/#sec-ContinueModuleLoading */
+/** https://tc39.es/proposal-deferred-reexports/#sec-ContinueModuleLoading */
 export function ContinueModuleLoading(state: GraphLoadingState, result: PlainCompletion<AbstractModuleRecord>, request?: ModuleRequestRecord) {
+  // 1. If state.[[IsLoading]] is false, return unused.
   if (state.IsLoading === false) {
     return;
   }
   result = EnsureCompletion(result);
+  // 2. If moduleCompletion is a normal completion, then
   if (result instanceof NormalCompletion) {
+    // a. Perform InnerModuleLoading(state, moduleCompletion.[[Value]], importedNames).
     InnerModuleLoading(state, result.Value, request?.ImportedNames ?? 'all');
-  } else {
+  } else { // 3. Else,
+    // a. Set state.[[IsLoading]] to false.
     state.IsLoading = false;
+    // b. Perform ! Call(state.[[PromiseCapability]].[[Reject]], undefined, « moduleCompletion.[[Value]] »).
     X(Call(state.PromiseCapability.Reject, Value.undefined, [result.Value]));
   }
+  // 4. Return unused.
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-buildlinkinglist */
+/** https://tc39.es/proposal-deferred-reexports/#sec-BuildLinkingList */
 export function BuildLinkingList(
   linkingList: AbstractModuleRecord[],
   referrer: CyclicModuleRecord,
   moduleRequests: readonly ModuleRequestRecord[],
   previouslyImportedNames: PreviouslyImportedNamesEntry[],
 ): void {
+  // 1. For each ModuleRequest Record request of moduleRequests, do
   for (const request of moduleRequests) {
+    // a. Let requiredModule be GetImportedModule(referrer, request).
     const requiredModule = GetImportedModule(referrer, request);
+    // b. If linkingList does not contain requiredModule, then
     if (!linkingList.includes(requiredModule)) {
+      // i. Append requiredModule to linkingList.
       linkingList.push(requiredModule);
+      // ii. If requiredModule is a Cyclic Module Record, then
       if (requiredModule instanceof CyclicModuleRecord) {
+        // 1. Assert: previouslyImportedNames does not contain a Record whose [[Module]] field is requiredModule.
         Assert(!previouslyImportedNames.some((p) => p.Module === requiredModule));
+        // 2. Append the Record { [[Module]]: requiredModule, [[ImportedNames]]: « » } to previouslyImportedNames.
         previouslyImportedNames.push({ Module: requiredModule, ImportedNames: [] });
       }
     }
+    // c. If requiredModule is a Cyclic Module Record, then
     if (requiredModule instanceof CyclicModuleRecord) {
+      // i. Let optionalIndirectRequests be GetNewOptionalIndirectExportsModuleRequests(requiredModule, request.[[ImportedNames]], previouslyImportedNames).
       const optionalIndirectRequests = GetNewOptionalIndirectExportsModuleRequests(requiredModule, request.ImportedNames, previouslyImportedNames);
+      // ii. Perform BuildLinkingList(linkingList, requiredModule, optionalIndirectRequests, previouslyImportedNames).
       BuildLinkingList(linkingList, requiredModule, optionalIndirectRequests, previouslyImportedNames);
     }
   }
+  // 2. Return unused.
 }
 
 /** https://tc39.es/proposal-deferred-reexports/#sec-InnerModuleLinking */
@@ -261,49 +341,79 @@ export function InnerModuleLinking(
   stack: CyclicModuleRecord[],
   index: number,
 ): PlainCompletion<number> {
+  // 1. If module is not a Cyclic Module Record, then
   if (!(module instanceof CyclicModuleRecord)) {
+    // a. Perform ? module.Link().
     Q(module.Link());
+    // b. Return index.
     return index;
   }
+  // 2. If module.[[Status]] is one of linking, linked, evaluating-async, or evaluated, then
   if (module.Status === 'linking' || module.Status === 'linked' || module.Status === 'evaluating-async' || module.Status === 'evaluated') {
+    // a. Return index.
     return index;
   }
+  // 3. Assert: module.[[Status]] is unlinked.
   Assert(module.Status === 'unlinked');
+  // 4. Set module.[[Status]] to linking.
   module.Status = 'linking';
+  // 5. Let moduleIndex be index.
   const moduleIndex = index;
+  // 6. Set module.[[DFSAncestorIndex]] to index.
   module.DFSAncestorIndex = index;
+  // 7. Set index to index + 1.
   index += 1;
+  // 8. Append module to stack.
   stack.push(module);
-
-  // BuildLinkingList tracks previously-imported names within a single call,
-  // not threaded across recursive InnerModuleLinking invocations — see spec.
+  // 9. Let linkingList be « ».
+  // 10. Perform BuildLinkingList(linkingList, module, module.[[RequestedModules]], « »).
+  //     BuildLinkingList tracks previously-imported names within a single call,
+  //     not threaded across recursive InnerModuleLinking invocations — see spec.
   const linkingList: AbstractModuleRecord[] = [];
   BuildLinkingList(linkingList, module, module.RequestedModules, []);
-
+  // 11. For each Module Record requiredModule of linkingList, do
   for (const requiredModule of linkingList) {
+    // a. Set index to ? InnerModuleLinking(requiredModule, stack, index).
     index = Q(InnerModuleLinking(requiredModule, stack, index));
+    // b. If requiredModule is a Cyclic Module Record, then
     if (requiredModule instanceof CyclicModuleRecord) {
+      // i. Assert: requiredModule.[[Status]] is one of linking, linked, evaluating-async, or evaluated.
       Assert(requiredModule.Status === 'linking' || requiredModule.Status === 'linked' || requiredModule.Status === 'evaluating-async' || requiredModule.Status === 'evaluated');
+      // ii. Assert: requiredModule.[[Status]] is linking if and only if stack contains requiredModule.
       Assert((requiredModule.Status === 'linking') === stack.includes(requiredModule));
+      // iii. If requiredModule.[[Status]] is linking, then
       if (requiredModule.Status === 'linking') {
+        // 1. Set module.[[DFSAncestorIndex]] to min(module.[[DFSAncestorIndex]], requiredModule.[[DFSAncestorIndex]]).
         module.DFSAncestorIndex = Math.min(module.DFSAncestorIndex, requiredModule.DFSAncestorIndex!);
       }
     }
   }
+  // 12. Perform ? module.InitializeEnvironment().
   Q((module as SourceTextModuleRecord).InitializeEnvironment());
+  // 13. Assert: module occurs exactly once in stack.
   Assert(stack.indexOf(module) === stack.lastIndexOf(module));
+  // 14. Assert: module.[[DFSAncestorIndex]] ≤ moduleIndex.
   Assert(module.DFSAncestorIndex <= moduleIndex);
+  // 15. If module.[[DFSAncestorIndex]] = moduleIndex, then
   if (module.DFSAncestorIndex === moduleIndex) {
+    // a. Let done be false.
     let done = false;
+    // b. Repeat, while done is false,
     while (done === false) {
+      // i. Let requiredModule be the last element of stack.
+      // ii. Remove the last element of stack.
       const requiredModule = stack.pop();
+      // iii. Assert: requiredModule is a Cyclic Module Record.
       Assert(requiredModule instanceof CyclicModuleRecord);
+      // iv. Set requiredModule.[[Status]] to linked.
       requiredModule.Status = 'linked';
+      // v. If requiredModule and module are the same Module Record, set done to true.
       if (requiredModule === module) {
         done = true;
       }
     }
   }
+  // 16. Return index.
   return index;
 }
 
@@ -346,17 +456,21 @@ export function ReadyForSyncExecution(
 }
 
 /** https://tc39.es/proposal-deferred-reexports/#sec-EvaluateModuleSync */
-export function* EvaluateModuleSync(module: ModuleRecord, importedNames: ImportedNamesValue = 'all'): PlainEvaluator<undefined> {
-  // 1. Assert: If module is a Cyclic Module Record, ReadyForSyncExecution(module, importedNames) is true.
-  Assert(module instanceof CyclicModuleRecord ? ReadyForSyncExecution(module, importedNames) === Value.true : true);
+export function* EvaluateModuleSync(module: ModuleRecord, importedNames: ImportedNamesValue = []): PlainEvaluator<undefined> {
+  // 1. If importedNames is not present, set importedNames to « ».
+  //    (handled via the default parameter above)
+  // 2. If ReadyForSyncExecution(module, importedNames) is false, throw a TypeError exception.
+  if (ReadyForSyncExecution(module, importedNames) === Value.false) {
+    return Throw.TypeError('Module "$1" is not ready for synchronous execution', (module as CyclicModuleRecord).HostDefined?.specifier ?? '<anonymous module>');
+  }
   if (!(module instanceof CyclicModuleRecord && module.Status === 'evaluated')) {
     Q(surroundingAgent.debugger_cannotPreview);
   }
-  // 2. Let promise be module.Evaluate(importedNames).
+  // 3. Let promise be module.Evaluate(importedNames).
   const promise = yield* module.Evaluate(importedNames);
-  // 3. Assert: promise.[[PromiseState]] is either fulfilled or rejected.
+  // 4. Assert: promise.[[PromiseState]] is either fulfilled or rejected.
   Assert(promise.PromiseState === 'fulfilled' || promise.PromiseState === 'rejected');
-  // 4. If promise.[[PromiseState]] is rejected, then
+  // 5. If promise.[[PromiseState]] is rejected, then
   if (promise.PromiseState === 'rejected') {
     // a. If promise.[[PromiseIsHandled]] is false, perform HostPromiseRejectionTracker(promise, "handle").
     if (promise.PromiseIsHandled === Value.false) {
@@ -364,88 +478,136 @@ export function* EvaluateModuleSync(module: ModuleRecord, importedNames: Importe
     }
     // b. Set promise.[[PromiseIsHandled]] to true.
     promise.PromiseIsHandled = Value.true;
-    // c. Throw promise.[[PromiseResult]].
+    // c. Return ThrowCompletion(promise.[[PromiseResult]]).
     Throw(promise.PromiseResult!);
   }
-  // 5. Return unused.
+  // 6. Return unused.
   return undefined;
 }
 
 /** https://tc39.es/proposal-deferred-reexports/#sec-innermoduleevaluation */
 export function* InnerModuleEvaluation(module: AbstractModuleRecord, stack: CyclicModuleRecord[], index: number): PlainEvaluator<number> {
+  // 1. If module is not a Cyclic Module Record, then
   if (!(module instanceof CyclicModuleRecord)) {
+    // a. Perform ? EvaluateModuleSync(module).
     Q(yield* EvaluateModuleSync(module));
+    // b. Return index.
     return NormalCompletion(index);
   }
+  // 2. If module.[[Status]] is either evaluating-async or evaluated, then
   if (module.Status === 'evaluating-async' || module.Status === 'evaluated') {
+    // a. If module.[[EvaluationError]] is empty, return index.
     if (module.EvaluationError === undefined) {
       return NormalCompletion(index);
     } else {
+      // b. Otherwise, return ? module.[[EvaluationError]].
       return module.EvaluationError;
     }
   }
+  // 3. If module.[[Status]] is evaluating, return index.
   if (module.Status === 'evaluating') {
     return NormalCompletion(index);
   }
+  // 4. Assert: module.[[Status]] is linked.
   Assert(module.Status === 'linked');
+  // 5. Set module.[[Status]] to evaluating.
   module.Status = 'evaluating';
+  // 6. Let moduleIndex be index.
   const moduleIndex = index;
+  // 7. Set module.[[DFSAncestorIndex]] to index.
   module.DFSAncestorIndex = index;
+  // 8. Set module.[[PendingAsyncDependencies]] to 0.
   module.PendingAsyncDependencies = 0;
   module.AsyncParentModules = [];
+  // 9. Set index to index + 1.
   index += 1;
+  // 10. Let evaluationList be « ».
   const evaluationList: ModuleRecord[] = [];
+  // 11. Perform BuildEvaluationList(evaluationList, module, module.[[RequestedModules]]).
   BuildEvaluationList(evaluationList, module, module.RequestedModules);
+  // 12. Append module to stack.
   stack.push(module);
+  // 13. For each Module Record requiredModule of evaluationList, do
   for (const required of evaluationList!) {
     let requiredModule: ModuleRecord | CyclicModuleRecord = required as ModuleRecord;
+    // a. Set index to ? InnerModuleEvaluation(requiredModule, stack, index).
     index = Q(yield* InnerModuleEvaluation(requiredModule, stack, index));
+    // b. If requiredModule is a Cyclic Module Record, then
     if (requiredModule instanceof CyclicModuleRecord) {
+      // i. Assert: requiredModule.[[Status]] is one of evaluating, evaluating-async, or evaluated.
       Assert(requiredModule.Status === 'evaluating' || requiredModule.Status === 'evaluating-async' || requiredModule.Status === 'evaluated');
+      // ii. Assert: requiredModule.[[Status]] is evaluating if and only if stack contains requiredModule.
       Assert((requiredModule.Status === 'evaluating') === stack.includes(requiredModule));
+      // iii. If requiredModule.[[Status]] is evaluating, then
       if (requiredModule.Status === 'evaluating') {
+        // 1. Set module.[[DFSAncestorIndex]] to min(module.[[DFSAncestorIndex]], requiredModule.[[DFSAncestorIndex]]).
         module.DFSAncestorIndex = Math.min(module.DFSAncestorIndex, requiredModule.DFSAncestorIndex!);
-      } else {
+      } else { // iv. Else,
+        // 1. Set requiredModule to requiredModule.[[CycleRoot]].
         requiredModule = requiredModule.CycleRoot!;
+        // 2. Assert: requiredModule.[[Status]] is either evaluating-async or evaluated.
         Assert((requiredModule as CyclicModuleRecord).Status === 'evaluating-async' || (requiredModule as CyclicModuleRecord).Status === 'evaluated');
+        // 3. If requiredModule.[[EvaluationError]] is not empty, return ? requiredModule.[[EvaluationError]].
         if ((requiredModule as CyclicModuleRecord).EvaluationError !== undefined) {
           return EnsureCompletion((requiredModule as CyclicModuleRecord).EvaluationError);
         }
       }
+      // v. If requiredModule.[[AsyncEvaluationOrder]] is an integer, then
       if (typeof (requiredModule as CyclicModuleRecord).AsyncEvaluationOrder === 'number') {
+        // 1. Set module.[[PendingAsyncDependencies]] to module.[[PendingAsyncDependencies]] + 1.
         module.PendingAsyncDependencies += 1;
+        // 2. Append module to requiredModule.[[AsyncParentModules]].
         (requiredModule as CyclicModuleRecord).AsyncParentModules.push(module);
       }
     }
   }
+  // 14. If module.[[PendingAsyncDependencies]] > 0 or module.[[HasTLA]] is true, then
   if (module.PendingAsyncDependencies > 0 || module.HasTLA === Value.true) {
+    // a. Assert: module.[[AsyncEvaluationOrder]] is unset.
     Assert(module.AsyncEvaluationOrder === 'unset');
+    // b. Set module.[[AsyncEvaluationOrder]] to IncrementModuleAsyncEvaluationCount().
     module.AsyncEvaluationOrder = IncrementModuleAsyncEvaluationCount();
+    // c. If module.[[PendingAsyncDependencies]] = 0, perform ExecuteAsyncModule(module).
     if (module.PendingAsyncDependencies === 0) {
       X(yield* ExecuteAsyncModule(module));
     }
-  } else {
+  } else { // 15. Else,
+    // a. Perform ? module.ExecuteModule().
     Q(yield* module.ExecuteModule());
   }
+  // 16. Assert: module occurs exactly once in stack.
   Assert(stack.indexOf(module) === stack.lastIndexOf(module));
+  // 17. Assert: module.[[DFSAncestorIndex]] ≤ moduleIndex.
   Assert(module.DFSAncestorIndex <= moduleIndex);
+  // 18. If module.[[DFSAncestorIndex]] = moduleIndex, then
   if (module.DFSAncestorIndex === moduleIndex) {
+    // a. Let done be false.
     let done = false;
+    // b. Repeat, while done is false,
     while (done === false) {
+      // i. Let requiredModule be the last element of stack.
+      // ii. Remove the last element of stack.
       const requiredModule = stack.pop();
+      // iii. Assert: requiredModule is a Cyclic Module Record.
       Assert(requiredModule instanceof CyclicModuleRecord);
+      // iv. Assert: requiredModule.[[AsyncEvaluationOrder]] is either an integer or unset.
       Assert(typeof requiredModule.AsyncEvaluationOrder === 'number' || requiredModule.AsyncEvaluationOrder === 'unset');
+      // v. If requiredModule.[[AsyncEvaluationOrder]] is unset, set requiredModule.[[Status]] to evaluated.
       if (requiredModule.AsyncEvaluationOrder === 'unset') {
         requiredModule.Status = 'evaluated';
       } else {
+        // vi. Otherwise, set requiredModule.[[Status]] to evaluating-async.
         requiredModule.Status = 'evaluating-async';
       }
+      // vii. If requiredModule and module are the same Module Record, set done to true.
       if (requiredModule === module) {
         done = true;
       }
+      // viii. Set requiredModule.[[CycleRoot]] to module.
       requiredModule.CycleRoot = module;
     }
   }
+  // 19. Return index.
   return index;
 }
 
@@ -494,15 +656,19 @@ export function GatherAsynchronousTransitiveDependencies(module: ModuleRecord, s
   return result;
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-buildevaluationlist */
+/** https://tc39.es/proposal-deferred-reexports/#sec-BuildEvaluationList */
 export function BuildEvaluationList(
   evaluationList: ModuleRecord[],
   referrer: CyclicModuleRecord,
   moduleRequests: readonly ModuleRequestRecord[],
 ): void {
+  // 1. For each ModuleRequest Record request of moduleRequests, do
   for (const request of moduleRequests) {
+    // a. Let requiredModule be GetImportedModule(referrer, request.[[Specifier]]).
     const requiredModule = GetImportedModule(referrer, request);
+    // b. If request.[[Phase]] is defer, then
     if (request.Phase === 'defer') {
+      // i. Perform ListAppendUnique(evaluationList, GatherAsynchronousTransitiveDependencies(requiredModule)).
       ListAppendUnique(evaluationList, GatherAsynchronousTransitiveDependencies(requiredModule));
       // For named-import consumers (request.ImportedNames is a list of names),
       // eagerly add the deferred dep so its bindings are available at access time
@@ -513,35 +679,57 @@ export function BuildEvaluationList(
         evaluationList.push(requiredModule);
       }
     } else if (!evaluationList.includes(requiredModule)) {
+      // c. Else if evaluationList does not contain requiredModule, then
+      // i. Append requiredModule to evaluationList.
       evaluationList.push(requiredModule);
     }
+    // d. If requiredModule is a Cyclic Module Record, then
     if (requiredModule instanceof CyclicModuleRecord) {
+      // i. Let importedNames be request.[[ImportedNames]].
       const importedNames = request.ImportedNames;
+      // ii. If importedNames = all, then
       if (importedNames === 'all') {
         // import * over a deferred re-exporter: only asynchronous transitive
         // deps of `export defer` sources evaluate here. Synchronous deps are
         // deferred to module-namespace [[Get]] (phase 2b).
+        // 1. Let allOptionalIndirectRequests be requiredModule.GetOptionalIndirectExportsModuleRequests(importedNames).
         const allOptionalIndirectRequests = requiredModule.GetOptionalIndirectExportsModuleRequests(importedNames);
+        // 2. Let seen be a new empty List.
+        // 3. Perform ListAppendUnique(evaluationList, GatherAsynchronousTransitiveDependenciesForRequests(requiredModule, allOptionalIndirectRequests, seen)).
         ListAppendUnique(evaluationList, GatherAsynchronousTransitiveDependenciesForRequests(requiredModule, allOptionalIndirectRequests, new Set()));
-      } else {
+      } else { // iii. Else,
+        // 1. Let optionalIndirectRequests be requiredModule.GetOptionalIndirectExportsModuleRequests(importedNames).
         const optionalIndirectRequests = requiredModule.GetOptionalIndirectExportsModuleRequests(importedNames);
+        // 2. Perform BuildEvaluationList(evaluationList, requiredModule, optionalIndirectRequests).
         BuildEvaluationList(evaluationList, requiredModule, optionalIndirectRequests);
       }
     }
   }
+  // 2. Return unused.
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-gatherasynchronoustransitivedependenciesforrequests */
+/** https://tc39.es/proposal-deferred-reexports/#sec-GatherAsynchronousTransitiveDependenciesForRequests */
 export function GatherAsynchronousTransitiveDependenciesForRequests(
   referrer: CyclicModuleRecord,
   requests: readonly ModuleRequestRecord[],
   seen: Set<ModuleRecord> = new Set(),
 ): ModuleRecord[] {
+  // 1. Let result be a new empty List.
   const result: ModuleRecord[] = [];
+  // 2. For each ModuleRequest Record request of moduleRequests, do
   for (const request of requests) {
-    const dep = GetImportedModule(referrer, request);
-    ListAppendUnique(result, GatherAsynchronousTransitiveDependencies(dep, seen));
+    // a. Let requiredModule be GetImportedModule(referrer, request).
+    const requiredModule = GetImportedModule(referrer, request);
+    // b. Perform ListAppendUnique(result, GatherAsynchronousTransitiveDependencies(requiredModule, seen)).
+    ListAppendUnique(result, GatherAsynchronousTransitiveDependencies(requiredModule, seen));
+    // c. Let optionalIndirectRequests be requiredModule.GetOptionalIndirectExportsModuleRequests(request.[[ImportedNames]]).
+    if (requiredModule instanceof CyclicModuleRecord) {
+      const optionalIndirectRequests = requiredModule.GetOptionalIndirectExportsModuleRequests(request.ImportedNames);
+      // d. Perform ListAppendUnique(result, GatherAsynchronousTransitiveDependenciesForRequests(requiredModule, optionalIndirectRequests, seen)).
+      ListAppendUnique(result, GatherAsynchronousTransitiveDependenciesForRequests(requiredModule, optionalIndirectRequests, seen));
+    }
   }
+  // 3. Return result.
   return result;
 }
 
@@ -581,84 +769,139 @@ function* ExecuteAsyncModule(module: CyclicModuleRecord) {
 
 /** https://tc39.es/ecma262/#sec-gather-available-ancestors */
 function GatherAvailableAncestors(module: CyclicModuleRecord, execList: CyclicModuleRecord[]) {
+  // 1. For each Cyclic Module Record m of module.[[AsyncParentModules]], do
   for (const m of module.AsyncParentModules) {
+    // a. If execList does not contain m and m.[[CycleRoot]].[[EvaluationError]] is empty, then
     if (!execList.includes(m) && m.CycleRoot!.EvaluationError === undefined) {
+      // i. Assert: m.[[Status]] is evaluating-async.
       Assert(m.Status === 'evaluating-async');
+      // ii. Assert: m.[[EvaluationError]] is empty.
       Assert(m.EvaluationError === undefined);
+      // iii. Assert: m.[[AsyncEvaluationOrder]] is an integer.
       Assert(typeof m.AsyncEvaluationOrder === 'number');
+      // iv. Assert: m.[[PendingAsyncDependencies]] > 0.
       Assert(m.PendingAsyncDependencies! > 0);
+      // v. Set m.[[PendingAsyncDependencies]] to m.[[PendingAsyncDependencies]] - 1.
       m.PendingAsyncDependencies! -= 1;
+      // vi. If m.[[PendingAsyncDependencies]] = 0, then
       if (m.PendingAsyncDependencies === 0) {
+        // 1. Append m to execList.
         execList.push(m);
+        // 2. If m.[[HasTLA]] is false, perform GatherAvailableAncestors(m, execList).
         if (m.HasTLA === Value.false) {
           GatherAvailableAncestors(m, execList);
         }
       }
     }
   }
+  // 2. Return unused.
 }
 
 /** https://tc39.es/ecma262/#sec-asyncmodulexecutionfulfilled */
 function* AsyncModuleExecutionFulfilled(module: CyclicModuleRecord): PlainEvaluator {
+  // 1. If module.[[Status]] is evaluated, then
   if (module.Status === 'evaluated') {
+    // a. Assert: module.[[EvaluationError]] is not empty.
     Assert(module.EvaluationError !== undefined);
+    // b. Return unused.
     return;
   }
+  // 2. Assert: module.[[Status]] is evaluating-async.
   Assert(module.Status === 'evaluating-async');
+  // 3. Assert: module.[[AsyncEvaluationOrder]] is an integer.
   Assert(typeof module.AsyncEvaluationOrder === 'number');
+  // 4. Assert: module.[[EvaluationError]] is empty.
   Assert(module.EvaluationError === undefined);
+  // 5. Set module.[[AsyncEvaluationOrder]] to done.
   module.AsyncEvaluationOrder = 'done';
+  // 6. Set module.[[Status]] to evaluated.
   module.Status = 'evaluated';
+  // 7. If module.[[TopLevelCapability]] is not empty, then
   if (module.TopLevelCapability !== undefined) {
+    // a. Assert: module.[[CycleRoot]] is module.
     Assert(module.CycleRoot === module);
+    // b. Perform ! Call(module.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
     X(Call(module.TopLevelCapability.Resolve, Value.undefined, [Value.undefined]));
   }
-
+  // 8. Let execList be a new empty List.
   const execList: CyclicModuleRecord[] = [];
+  // 9. Perform GatherAvailableAncestors(module, execList).
   GatherAvailableAncestors(module, execList);
+  // 10. Let sortedExecList be a List whose elements are the elements of execList,
+  //     in the order in which they had their [[AsyncEvaluationOrder]] field set.
   Assert(execList.every((m) => typeof m.AsyncEvaluationOrder === 'number' && m.PendingAsyncDependencies === 0 && m.EvaluationError === undefined));
   const sortedExecList = execList.toSorted((m1, m2) => (m1.AsyncEvaluationOrder as number) - (m2.AsyncEvaluationOrder as number));
-
+  // 11. Assert: All elements of sortedExecList have their [[AsyncEvaluationOrder]] field set
+  //     to an integer, [[PendingAsyncDependencies]] field set to 0, and [[EvaluationError]]
+  //     field set to empty.
+  // 12. For each Cyclic Module Record m of sortedExecList, do
   for (const m of sortedExecList) {
+    // a. If m.[[Status]] is evaluated, then
     if (m.Status === 'evaluated') {
+      // i. Assert: m.[[EvaluationError]] is not empty.
       Assert(m.EvaluationError !== undefined);
-    } else if (m.HasTLA === Value.true) {
+    } else if (m.HasTLA === Value.true) { // b. Else if m.[[HasTLA]] is true, then
+      // i. Perform ExecuteAsyncModule(m).
       X(yield* ExecuteAsyncModule(m));
-    } else {
+    } else { // c. Else,
+      // i. Let result be m.ExecuteModule().
       const result = yield* m.ExecuteModule();
+      // ii. If result is an abrupt completion, then
       if (result instanceof AbruptCompletion) {
+        // 1. Perform AsyncModuleExecutionRejected(m, result.[[Value]]).
         X(AsyncModuleExecutionRejected(m, result.Value));
-      } else {
+      } else { // iii. Else,
+        // 1. Set m.[[AsyncEvaluationOrder]] to done.
         m.AsyncEvaluationOrder = 'done';
+        // 2. Set m.[[Status]] to evaluated.
         m.Status = 'evaluated';
+        // 3. If m.[[TopLevelCapability]] is not empty, then
         if (m.TopLevelCapability !== undefined) {
+          // a. Assert: m.[[CycleRoot]] is m.
           Assert(m.CycleRoot === m);
+          // b. Perform ! Call(m.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
           X(Call(m.TopLevelCapability.Resolve, Value.undefined, [Value.undefined]));
         }
       }
     }
   }
+  // 13. Return unused.
 }
 
 /** https://tc39.es/ecma262/#sec-AsyncModuleExecutionRejected */
 function AsyncModuleExecutionRejected(module: CyclicModuleRecord, error: Value) {
+  // 1. If module.[[Status]] is evaluated, then
   if (module.Status === 'evaluated') {
+    // a. Assert: module.[[EvaluationError]] is not empty.
     Assert(module.EvaluationError !== undefined);
+    // b. Return unused.
     return;
   }
+  // 2. Assert: module.[[Status]] is evaluating-async.
   Assert(module.Status === 'evaluating-async');
+  // 3. Assert: module.[[AsyncEvaluationOrder]] is an integer.
   Assert(typeof module.AsyncEvaluationOrder === 'number');
+  // 4. Assert: module.[[EvaluationError]] is empty.
   Assert(module.EvaluationError === undefined);
+  // 5. Set module.[[EvaluationError]] to ThrowCompletion(error).
   module.EvaluationError = ThrowCompletion(error);
+  // 6. Set module.[[Status]] to evaluated.
   module.Status = 'evaluated';
+  // 7. Set module.[[AsyncEvaluationOrder]] to done.
   module.AsyncEvaluationOrder = 'done';
+  // 8. If module.[[TopLevelCapability]] is not empty, then
   if (module.TopLevelCapability !== undefined) {
+    // a. Assert: module.[[CycleRoot]] is module.
     Assert(module.CycleRoot === module);
+    // b. Perform ! Call(module.[[TopLevelCapability]].[[Reject]], undefined, « error »).
     X(Call(module.TopLevelCapability.Reject, Value.undefined, [error]));
   }
+  // 9. For each Cyclic Module Record m of module.[[AsyncParentModules]], do
   for (const m of module.AsyncParentModules) {
+    // a. Perform AsyncModuleExecutionRejected(m, error).
     AsyncModuleExecutionRejected(m, error);
   }
+  // 10. Return unused.
 }
 
 function getRecordWithSpecifier(loadedModules: CyclicModuleRecord['LoadedModules'], request: ModuleRequestRecord) {
@@ -674,12 +917,12 @@ export function GetImportedModule(referrer: CyclicModuleRecord, request: ModuleR
   return record.Module;
 }
 
-/** https://tc39.es/ecma262/#sec-FinishLoadingImportedModule */
+/** https://tc39.es/proposal-deferred-reexports/#sec-FinishLoadingImportedModule */
 export function FinishLoadingImportedModule(referrer: ScriptRecord | CyclicModuleRecord | Realm, moduleRequest: ModuleRequestRecord, result: PlainCompletion<AbstractModuleRecord>, state: GraphLoadingState | PromiseCapabilityRecord) {
   result = EnsureCompletion(result);
   // 1. If result is a normal completion, then
   if (result.Type === 'normal') {
-    // a. If referrer.[[LoadedModules]] contains a LoadedModuleRequest Record record such that ModuleRequestsEqual(record, moduleRequest) is true, then
+    // a. If referrer.[[LoadedModules]] contains a LoadedModuleRequest Record record such that ModuleRequestsKeyEqual(record, moduleRequest) is true, then
     const record = getRecordWithSpecifier(referrer.LoadedModules, moduleRequest);
     if (record !== undefined) {
       // i. Assert: That Record's [[Module]] is result.[[Value]].
@@ -689,17 +932,14 @@ export function FinishLoadingImportedModule(referrer: ScriptRecord | CyclicModul
       referrer.LoadedModules.push({ Specifier: moduleRequest.Specifier, Attributes: moduleRequest.Attributes, Module: result.Value });
     }
   }
-
   // 2. If payload is a GraphLoadingState Record, then
   if (state instanceof GraphLoadingState) {
-    // a. Perform ContinueModuleLoading(payload, result).
+    // a. Perform ContinueModuleLoading(payload, result, moduleRequest.[[ImportedNames]]).
     ContinueModuleLoading(state, result, moduleRequest);
-    // 3. Else,
-  } else {
-    // a. Perform ContinueDynamicImport(payload, result).
+  } else { // 3. Else,
+    // a. Perform ContinueDynamicImport(payload, result, moduleRequest.[[Phase]]).
     ContinueDynamicImport(state, result, moduleRequest.Phase);
   }
-
   // 4. Return unused.
 }
 
@@ -718,7 +958,7 @@ export function AllImportAttributesSupported(attributes: readonly ImportAttribut
   return undefined;
 }
 
-/** https://tc39.es/ecma262/#sec-getmodulenamespace */
+/** https://tc39.es/proposal-defer-import-eval/#sec-getmodulenamespace */
 export function GetModuleNamespace(
   module: AbstractModuleRecord,
   phase: 'defer' | 'evaluation',
@@ -727,7 +967,7 @@ export function GetModuleNamespace(
   if (module instanceof CyclicModuleRecord) {
     Assert(module.Status !== 'new' && module.Status !== 'unlinked');
   }
-  // 2. Let namespace be module.[[Namespace]].
+  // 2. If phase is defer, let namespace be module.[[DeferredNamespace]]; otherwise let namespace be module.[[Namespace]].
   let namespace = phase === 'defer' ? module.DeferredNamespace : module.Namespace;
   // 3. If namespace is empty, then
   if (namespace === undefined) {
@@ -737,6 +977,9 @@ export function GetModuleNamespace(
     const unambiguousNames = [];
     // c. For each element name of exportedNames, do
     for (const name of exportedNames) {
+      // proposal-defer-import-eval: when phase is defer, do not include "then"
+      // in the namespace's exports list, since the namespace is intentionally
+      // not awaitable (avoiding accidental thenable behavior).
       if (phase !== 'defer' || name.stringValue() !== 'then') {
         // i. Let resolution be module.ResolveExport(name).
         const resolution = module.ResolveExport(name);
@@ -746,7 +989,7 @@ export function GetModuleNamespace(
         }
       }
     }
-    // d. Set namespace to ModuleNamespaceCreate(module, unambiguousNames).
+    // d. Set namespace to ModuleNamespaceCreate(module, unambiguousNames, phase).
     namespace = ModuleNamespaceCreate(module, unambiguousNames, phase);
   }
   // 4. Return namespace.

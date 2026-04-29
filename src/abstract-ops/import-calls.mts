@@ -13,7 +13,7 @@ import {
 } from '../completion.mts';
 import { SafePerformPromiseAll } from '../intrinsics/Promise.mts';
 
-/** https://tc39.es/ecma262/#sec-ContinueDynamicImport */
+/** https://tc39.es/proposal-deferred-reexports/#sec-ContinueDynamicImport */
 export function ContinueDynamicImport(
   promiseCapability: PromiseCapabilityRecord,
   moduleCompletion: PlainCompletion<AbstractModuleRecord>,
@@ -29,7 +29,8 @@ export function ContinueDynamicImport(
   // 2. Let module be moduleCompletion.[[Value]].
   const module = ValueOfNormalCompletion(moduleCompletion);
 
-  // 3. Let loadPromise be module.LoadRequestedModules().
+  // 3. Let loadPromise be module.LoadRequestedModules(all).
+  //    (engine262 default for LoadRequestedModules' importedNames is 'all'.)
   const loadPromise = module.LoadRequestedModules();
 
   // 4. Let rejectedClosure be a new Abstract Closure with parameters (reason) that captures promiseCapability and performs the following steps when called:
@@ -43,7 +44,8 @@ export function ContinueDynamicImport(
 
   // 6. Let linkAndEvaluateClosure be a new Abstract Closure with no parameters that captures module, promiseCapability, and onRejected and performs the following steps when called:
   function* linkAndEvaluateClosure() {
-    // a. Let link be Completion(module.Link()).
+    // a. Let link be Completion(module.Link(all)).
+    //    (engine262 default for Link's importedNames is 'all'.)
     const link = module.Link();
     // b. If link is an abrupt completion, then
     if (link instanceof AbruptCompletion) {

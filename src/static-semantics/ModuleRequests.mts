@@ -28,8 +28,10 @@ function stringsEqual(left: JSStringValue, right: JSStringValue) {
 // Equality compares Specifier + Attributes only.
 // ImportedNames and Phase are intentionally NOT part of equality —
 // they are merged/refined by callers, not used to distinguish records.
-// https://tc39.es/ecma262/#sec-ModuleRequestsEqual
+/** https://tc39.es/proposal-defer-import-eval/#sec-ModuleRequestsKeyEqual */
 export function ModuleRequestsEqual(left: ModuleRequestRecord | LoadedModuleRequestRecord, right: ModuleRequestRecord | LoadedModuleRequestRecord) {
+  // 1. If left.[[Specifier]] is right.[[Specifier]], then
+  //    a. (Compare attributes...)
   if (!stringsEqual(left.Specifier, right.Specifier)) {
     return false;
   }
@@ -37,15 +39,20 @@ export function ModuleRequestsEqual(left: ModuleRequestRecord | LoadedModuleRequ
   const rightAttrs = right.Attributes;
   const leftAttrsCount = leftAttrs.length;
   const rightAttrsCount = rightAttrs.length;
+  // b. If the number of elements in left.[[Attributes]] is not equal to the number of elements in right.[[Attributes]], return false.
   if (leftAttrsCount !== rightAttrsCount) {
     return false;
   }
+  // c. For each ImportAttribute Record l of left.[[Attributes]], do
+  //    i. If right.[[Attributes]] does not contain a record r such that l.[[Key]] is r.[[Key]] and l.[[Value]] is r.[[Value]], return false.
   for (const l of leftAttrs) {
     if (!rightAttrs.some((r) => stringsEqual(l.Key, r.Key) && stringsEqual(l.Value, r.Value))) {
       return false;
     }
   }
+  // d. Return true.
   return true;
+  // 2. Otherwise return false.
 }
 
 // https://tc39.es/ecma262/#sec-withclausetoattributes
@@ -61,6 +68,14 @@ function WithClauseToAttributes(node: ParseNode.WithClause): ImportAttributeReco
   return attributes;
 }
 
+/** Compute [[ImportedNames]] for a ModuleRequest derived from an ImportDeclaration's ImportClause.
+ * Per proposal-deferred-reexports:
+ * - `import "m"` (no clause) → « »
+ * - `import * as ns from "m"` (NameSpaceImport) → ~all~
+ * - `import a from "m"` (DefaultBinding) → « "default" »
+ * - `import { x, y as z } from "m"` (NamedImports) → « "x", "y" »
+ * - Combinations are unioned.
+ */
 function importedNamesFromImportClause(importClause: ParseNode.ImportClause | undefined): ImportedNamesValue {
   if (!importClause) {
     return [];
@@ -80,6 +95,12 @@ function importedNamesFromImportClause(importClause: ParseNode.ImportClause | un
   return names;
 }
 
+/** Compute [[ImportedNames]] for a ModuleRequest derived from an ExportFromClause.
+ * Per proposal-deferred-reexports:
+ * - `export * from "m"` → ~all-but-default~ (default is excluded for star re-exports)
+ * - `export * as ns from "m"` → ~all~
+ * - `export { x, y as z } from "m"` → « "x", "y" »
+ */
 function importedNamesFromExportFromClause(clause: ParseNode.ExportFromClauseLike): ImportedNamesValue {
   if (clause.type === 'ExportFromClause') {
     // export * from "m"  → ModuleExportName absent  → 'all-but-default'
