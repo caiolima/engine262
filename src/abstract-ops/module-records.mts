@@ -59,17 +59,17 @@ export function MergeImportedNames(a: ImportedNamesValue, b: ImportedNamesValue)
   if (isAllNames(a) || isAllNames(b)) {
     return 'all';
   }
-  if (isAllButDefault(a) && isAllButDefault(b)) {
-    return 'all-but-default';
-  }
   // 2. If a is all-but-default and b is a List of Strings that contains "default", return all.
-  if (isAllButDefault(a)) {
-    return listIncludesString(b as readonly JSStringValue[], DEFAULT_NAME) ? 'all' : 'all-but-default';
+  if (isAllButDefault(a) && !isAllButDefault(b) && listIncludesString(b as readonly JSStringValue[], DEFAULT_NAME)) {
+    return 'all';
   }
   // 3. If b is all-but-default and a is a List of Strings that contains "default", return all.
+  if (isAllButDefault(b) && !isAllButDefault(a) && listIncludesString(a as readonly JSStringValue[], DEFAULT_NAME)) {
+    return 'all';
+  }
   // 4. If a is all-but-default or b is all-but-default, return all-but-default.
-  if (isAllButDefault(b)) {
-    return listIncludesString(a as readonly JSStringValue[], DEFAULT_NAME) ? 'all' : 'all-but-default';
+  if (isAllButDefault(a) || isAllButDefault(b)) {
+    return 'all-but-default';
   }
   // 5. Assert: a and b are a List of Strings.
   // 6. Let merged be a copy of the List a.
@@ -93,17 +93,7 @@ export function ExcludeImportedNames(a: ImportedNamesValue, b: ImportedNamesValu
     return [];
   }
   // 2. If a is all, return all.
-  //    Engine262 deviation: when b is all-but-default, return [« "default" »]
-  //    instead — this is a tighter set than 'all' but still satisfies "guaranteed
-  //    to include all the names present in a but not in b". Tests rely on
-  //    avoiding eager evaluation of non-default exports.
   if (isAllNames(a)) {
-    if (isAllButDefault(b)) {
-      return [DEFAULT_NAME];
-    }
-    // a = all, b = list. The result is "all minus a finite set"; the spec keeps
-    // this opaque by returning 'all'. Downstream filters re-evaluate against
-    // actual [[Exports]].
     return 'all';
   }
   // 3. If a is all-but-default, then
@@ -117,20 +107,21 @@ export function ExcludeImportedNames(a: ImportedNamesValue, b: ImportedNamesValu
   }
   // 4. Assert: a is a List of Strings.
   const aList = a as readonly JSStringValue[];
-  const result: JSStringValue[] = [];
   // 5. If b is all-but-default, then
-  //    a. If a contains "default", return « "default" ».
-  //    b. Return « ».
+  if (isAllButDefault(b)) {
+    // a. If a contains "default", return « "default" ».
+    if (listIncludesString(aList, DEFAULT_NAME)) {
+      return [DEFAULT_NAME];
+    }
+    // b. Return « ».
+    return [];
+  }
   // 6. Assert: b is a List of Strings.
+  const bList = b as readonly JSStringValue[];
   // 7. Return a new List containing all the elements of a that are not also elements of b.
+  const result: JSStringValue[] = [];
   for (const name of aList) {
-    if (isAllButDefault(b)) {
-      // 'all-but-default' contains every name except "default"; the difference
-      // is the intersection of `a` with {"default"}.
-      if (jsStringEquals(name, DEFAULT_NAME)) {
-        result.push(name);
-      }
-    } else if (!listIncludesString(b as readonly JSStringValue[], name)) {
+    if (!listIncludesString(bList, name)) {
       result.push(name);
     }
   }
