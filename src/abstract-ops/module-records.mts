@@ -129,11 +129,13 @@ export function ExcludeImportedNames(a: ImportedNamesValue, b: ImportedNamesValu
 }
 
 /** https://tc39.es/proposal-deferred-reexports/#sec-ListAppendUnique */
-export function ListAppendUnique<T>(target: T[], items: Iterable<T>, equals: (a: T, b: T) => boolean = (a, b) => a === b): void {
+export function ListAppendUnique<T>(target: T[], items: Iterable<T>): void {
+  const seen = new Set(target);
   // 1. For each Record r of list2, do
   for (const item of items) {
     // a. If list1 does not contain r, append r to list1.
-    if (!target.some((existing) => equals(existing, item))) {
+    if (!seen.has(item)) {
+      seen.add(item);
       target.push(item);
     }
   }
