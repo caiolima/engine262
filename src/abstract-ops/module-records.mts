@@ -194,7 +194,7 @@ export class GraphLoadingState {
   }
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-InnerModuleLoading */
+/** https://tc39.es/ecma262/#sec-InnerModuleLoading */
 export function InnerModuleLoading(state: GraphLoadingState, module: AbstractModuleRecord, importedNames: ImportedNamesValue = 'all') {
   // 1. Assert: state.[[IsLoading]] is true.
   Assert(Boolean(state.IsLoading === true));
@@ -211,9 +211,7 @@ export function InnerModuleLoading(state: GraphLoadingState, module: AbstractMod
       }
       // ii. Append the Record { [[Module]]: module, [[ImportedNames]]: « » } to state.[[Visited]].
       state.Visited.add(module);
-      if (!state.PreviouslyImportedNames.some((p) => p.Module === module)) {
-        state.PreviouslyImportedNames.push({ Module: module, ImportedNames: [] });
-      }
+      state.PreviouslyImportedNames.push({ Module: module, ImportedNames: [] });
     }
     // c. Let optionalIndirectRequests be GetNewOptionalIndirectExportsModuleRequests(module, importedNames, state.[[Visited]]).
     const optionalIndirectRequests = GetNewOptionalIndirectExportsModuleRequests(module, importedNames, state.PreviouslyImportedNames);
@@ -231,7 +229,7 @@ export function InnerModuleLoading(state: GraphLoadingState, module: AbstractMod
         // 1. Let error be ThrowCompletion(a newly created SyntaxError object).
         const error = Throw.SyntaxError('Unsupported import attribute $1', invalidAttributeKey);
         // 2. Perform ContinueModuleLoading(state, error, request.[[ImportedNames]]).
-        ContinueModuleLoading(state, error);
+        ContinueModuleLoading(state, error, request.ImportedNames);
       } else {
         // ii. Else if module.[[LoadedModules]] contains a LoadedModuleRequest Record record such that ModuleRequestsKeyEqual(record, request) is true, then
         const record = getRecordWithSpecifier(module.LoadedModules, request);
@@ -275,21 +273,21 @@ export function InnerModuleLoading(state: GraphLoadingState, module: AbstractMod
 }
 
 /** https://tc39.es/proposal-deferred-reexports/#sec-ContinueModuleLoading */
-export function ContinueModuleLoading(state: GraphLoadingState, result: PlainCompletion<AbstractModuleRecord>, request?: ModuleRequestRecord) {
+export function ContinueModuleLoading(state: GraphLoadingState, moduleCompletion: PlainCompletion<AbstractModuleRecord>, importedNames: ImportedNamesValue) {
   // 1. If state.[[IsLoading]] is false, return unused.
   if (state.IsLoading === false) {
     return;
   }
-  result = EnsureCompletion(result);
+  moduleCompletion = EnsureCompletion(moduleCompletion);
   // 2. If moduleCompletion is a normal completion, then
-  if (result instanceof NormalCompletion) {
+  if (moduleCompletion instanceof NormalCompletion) {
     // a. Perform InnerModuleLoading(state, moduleCompletion.[[Value]], importedNames).
-    InnerModuleLoading(state, result.Value, request?.ImportedNames ?? 'all');
+    InnerModuleLoading(state, moduleCompletion.Value, importedNames);
   } else { // 3. Else,
     // a. Set state.[[IsLoading]] to false.
     state.IsLoading = false;
     // b. Perform ! Call(state.[[PromiseCapability]].[[Reject]], undefined, « moduleCompletion.[[Value]] »).
-    X(Call(state.PromiseCapability.Reject, Value.undefined, [result.Value]));
+    X(Call(state.PromiseCapability.Reject, Value.undefined, [moduleCompletion.Value]));
   }
   // 4. Return unused.
 }
@@ -928,7 +926,7 @@ export function FinishLoadingImportedModule(referrer: ScriptRecord | CyclicModul
   // 2. If payload is a GraphLoadingState Record, then
   if (state instanceof GraphLoadingState) {
     // a. Perform ContinueModuleLoading(payload, result, moduleRequest.[[ImportedNames]]).
-    ContinueModuleLoading(state, result, moduleRequest);
+    ContinueModuleLoading(state, result, moduleRequest.ImportedNames);
   } else { // 3. Else,
     // a. Perform ContinueDynamicImport(payload, result, moduleRequest.[[Phase]]).
     ContinueDynamicImport(state, result, moduleRequest.Phase);
