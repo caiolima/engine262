@@ -326,7 +326,7 @@ export function BuildLinkingList(
   // 2. Return unused.
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-InnerModuleLinking */
+/** https://tc39.es/ecma262/#sec-InnerModuleLinking */
 export function InnerModuleLinking(
   module: AbstractModuleRecord,
   stack: CyclicModuleRecord[],
@@ -358,8 +358,6 @@ export function InnerModuleLinking(
   stack.push(module);
   // 9. Let linkingList be « ».
   // 10. Perform BuildLinkingList(linkingList, module, module.[[RequestedModules]], « »).
-  //     BuildLinkingList tracks previously-imported names within a single call,
-  //     not threaded across recursive InnerModuleLinking invocations — see spec.
   const linkingList: AbstractModuleRecord[] = [];
   BuildLinkingList(linkingList, module, module.RequestedModules, []);
   // 11. For each Module Record requiredModule of linkingList, do
@@ -431,13 +429,7 @@ export function ReadyForSyncExecution(
   if (module.HasTLA === Value.true) {
     return Value.false;
   }
-  for (const request of module.RequestedModules) {
-    const requiredModule = GetImportedModule(module, request);
-    if (ReadyForSyncExecution(requiredModule, request.ImportedNames, seen) === Value.false) {
-      return Value.false;
-    }
-  }
-  for (const request of module.GetOptionalIndirectExportsModuleRequests(importedNames)) {
+  for (const request of [...module.RequestedModules, ...module.GetOptionalIndirectExportsModuleRequests(importedNames)]) {
     const requiredModule = GetImportedModule(module, request);
     if (ReadyForSyncExecution(requiredModule, request.ImportedNames, seen) === Value.false) {
       return Value.false;
