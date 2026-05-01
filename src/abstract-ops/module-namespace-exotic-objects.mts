@@ -273,7 +273,7 @@ function IsSymbolLikeNamespaceKey(P: PropertyKeyValue, ns: ModuleNamespaceObject
   return false;
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-GetModuleExportsList */
+/** https://tc39.es/proposal-defer-import-eval/#sec-GetModuleExportsList */
 function* GetModuleExportsList(O: ModuleNamespaceObject): PlainEvaluator<JSStringSet> {
   // 1. If O.[[Deferred]] is true, then
   if (O.Deferred) {

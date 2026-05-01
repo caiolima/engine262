@@ -429,7 +429,8 @@ export function ReadyForSyncExecution(
   if (module.HasTLA === Value.true) {
     return Value.false;
   }
-  for (const request of [...module.RequestedModules, ...module.GetOptionalIndirectExportsModuleRequests(importedNames)]) {
+  const allRequests = [...module.RequestedModules, ...module.GetOptionalIndirectExportsModuleRequests(importedNames)];
+  for (const request of allRequests) {
     const requiredModule = GetImportedModule(module, request);
     if (ReadyForSyncExecution(requiredModule, request.ImportedNames, seen) === Value.false) {
       return Value.false;
