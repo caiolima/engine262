@@ -32,7 +32,7 @@ import {
 import {
   Realm,
   HostGetSupportedImportAttributes,
-  ModuleRequestsEqual,
+  ModuleRequestsKeyEqual,
   type Arguments, type ImportAttributeRecord, type ImportedNamesValue, type ModuleRequestRecord, type PlainEvaluator, type ScriptRecord, type SourceTextModuleRecord,
   Throw,
   JSStringValue,
@@ -154,8 +154,8 @@ export function GetNewOptionalIndirectExportsModuleRequests(
   previouslyImportedNames: PreviouslyImportedNamesEntry[],
 ): readonly ModuleRequestRecord[] {
   // 1. Assert: previouslyImportedNames contains a Record whose [[Module]] field is module.
-  const previous = previouslyImportedNames.find((p) => p.Module === module);
   // 2. Let previous be the Record in previouslyImportedNames whose [[Module]] field is module.
+  const previous = previouslyImportedNames.find((p) => p.Module === module);
   Assert(previous !== undefined);
   // 3. Let newImportedNames be ExcludeImportedNames(importedNames, previous.[[ImportedNames]]).
   const newImportedNames = ExcludeImportedNames(importedNames, previous!.ImportedNames);
@@ -165,26 +165,22 @@ export function GetNewOptionalIndirectExportsModuleRequests(
   return module.GetOptionalIndirectExportsModuleRequests(newImportedNames);
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#graphloadingstate-record */
 export class GraphLoadingState {
-  // [[PromiseCapability]] — A PromiseCapability Record that is resolved when all dependencies are loaded.
   readonly PromiseCapability: PromiseCapabilityRecord;
 
-  // [[HostDefined]] — Host-provided value passed through to HostLoadImportedModule.
   readonly HostDefined?: ModuleRecordHostDefined;
 
-  // [[IsLoading]] — true while loading is in progress.
   IsLoading = true;
 
-  // [[Visited]] — Spec: a List of Records { [[Module]], [[ImportedNames]] }.
-  // engine262 splits this into a Set<CyclicModuleRecord> (visited modules) and
-  // PreviouslyImportedNames (per-module merged ImportedNames). Functionally equivalent.
+  // https://tc39.es/proposal-deferred-reexports/#graphloadingstate-record
+  // [[Visited]] on spec is a List of Records { [[Module]], [[ImportedNames]] }.
+  // Here we splits this into a Set<CyclicModuleRecord> (visited modules) and
+  // PreviouslyImportedNames (per-module merged ImportedNames).
   readonly Visited = new Set<CyclicModuleRecord>();
 
-  // [[PendingModulesCount]] — number of in-flight loads.
   PendingModules = 1;
 
-  // Companion to [[Visited]]: tracks the merged [[ImportedNames]] per module.
+  // Companion to [[Visited]] that tracks the merged [[ImportedNames]] per module.
   readonly PreviouslyImportedNames: PreviouslyImportedNamesEntry[];
 
   constructor({ PromiseCapability, HostDefined, PreviouslyImportedNames = [] }: Pick<GraphLoadingState, 'PromiseCapability' | 'HostDefined'> & { PreviouslyImportedNames?: PreviouslyImportedNamesEntry[] }) {
@@ -269,10 +265,11 @@ export function InnerModuleLoading(state: GraphLoadingState, module: AbstractMod
     // c. Perform ! Call(state.[[PromiseCapability]].[[Resolve]], undefined, « undefined »).
     X(Call(state.PromiseCapability.Resolve, Value.undefined, [Value.undefined]));
   }
+
   // 6. Return unused.
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-ContinueModuleLoading */
+/** https://tc39.es/ecma262/#sec-ContinueModuleLoading */
 export function ContinueModuleLoading(state: GraphLoadingState, moduleCompletion: PlainCompletion<AbstractModuleRecord>, importedNames: ImportedNamesValue) {
   // 1. If state.[[IsLoading]] is false, return unused.
   if (state.IsLoading === false) {
@@ -289,6 +286,7 @@ export function ContinueModuleLoading(state: GraphLoadingState, moduleCompletion
     // b. Perform ! Call(state.[[PromiseCapability]].[[Reject]], undefined, « moduleCompletion.[[Value]] »).
     X(Call(state.PromiseCapability.Reject, Value.undefined, [moduleCompletion.Value]));
   }
+
   // 4. Return unused.
 }
 
@@ -357,8 +355,8 @@ export function InnerModuleLinking(
   // 8. Append module to stack.
   stack.push(module);
   // 9. Let linkingList be « ».
-  // 10. Perform BuildLinkingList(linkingList, module, module.[[RequestedModules]], « »).
   const linkingList: AbstractModuleRecord[] = [];
+  // 10. Perform BuildLinkingList(linkingList, module, module.[[RequestedModules]], « »).
   BuildLinkingList(linkingList, module, module.RequestedModules, []);
   // 11. For each Module Record requiredModule of linkingList, do
   for (const requiredModule of linkingList) {
@@ -412,37 +410,51 @@ export function ReadyForSyncExecution(
   importedNames: ImportedNamesValue = 'all',
   seen: Set<CyclicModuleRecord> = new Set(),
 ): BooleanValue {
+  // 1. If module is not a Cyclic Module Record, return true.
   if (!(module instanceof CyclicModuleRecord)) {
     return Value.true;
   }
+  // 2. If seen is not present, set seen to a new empty List.
+  //    (handled via the default parameter above)
+  // 3. If seen contains module, return true.
   if (seen.has(module)) {
     return Value.true;
   }
+  // 4. Append module to seen.
   seen.add(module);
+  // 5. If module.[[Status]] is evaluated, return true.
   if (module.Status === 'evaluated') {
     return Value.true;
   }
+  // 6. If module.[[Status]] is evaluating or evaluating-async, return false.
   if (module.Status === 'evaluating' || module.Status === 'evaluating-async') {
     return Value.false;
   }
+  // 7. Assert: module.[[Status]] is linked.
   Assert(module.Status === 'linked');
+  // 8. If module.[[HasTLA]] is true, return false.
   if (module.HasTLA === Value.true) {
     return Value.false;
   }
-  const allRequests = [...module.RequestedModules, ...module.GetOptionalIndirectExportsModuleRequests(importedNames)];
-  for (const request of allRequests) {
+  // 9. Let requests be the list-concatenation of module.[[RequestedModules]] and module.GetOptionalIndirectExportsModuleRequests(importedNames).
+  const requests = [...module.RequestedModules, ...module.GetOptionalIndirectExportsModuleRequests(importedNames)];
+  // 10. For each ModuleRequest Record request of requests, do
+  for (const request of requests) {
+    // a. Let requiredModule be GetImportedModule(module, request).
     const requiredModule = GetImportedModule(module, request);
+    // b. If ReadyForSyncExecution(requiredModule, request.[[ImportedNames]], seen) is false, then
     if (ReadyForSyncExecution(requiredModule, request.ImportedNames, seen) === Value.false) {
+      // i. Return false.
       return Value.false;
     }
   }
+  // 11. Return true.
   return Value.true;
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-EvaluateModuleSync */
+/** https://tc39.es/ecma262/#sec-EvaluateModuleSync */
 export function* EvaluateModuleSync(module: ModuleRecord, importedNames: ImportedNamesValue = []): PlainEvaluator<undefined> {
   // 1. If importedNames is not present, set importedNames to « ».
-  //    (handled via the default parameter above)
   // 2. If ReadyForSyncExecution(module, importedNames) is false, throw a TypeError exception.
   if (ReadyForSyncExecution(module, importedNames) === Value.false) {
     return Throw.TypeError('Module "$1" is not ready for synchronous execution', (module as CyclicModuleRecord).HostDefined?.specifier ?? '<anonymous module>');
@@ -469,7 +481,7 @@ export function* EvaluateModuleSync(module: ModuleRecord, importedNames: Importe
   return undefined;
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-innermoduleevaluation */
+/** https://tc39.es/ecma262/#sec-innermoduleevaluation */
 export function* InnerModuleEvaluation(module: AbstractModuleRecord, stack: CyclicModuleRecord[], index: number): PlainEvaluator<number> {
   // 1. If module is not a Cyclic Module Record, then
   if (!(module instanceof CyclicModuleRecord)) {
@@ -654,14 +666,6 @@ export function BuildEvaluationList(
     if (request.Phase === 'defer') {
       // i. Perform ListAppendUnique(evaluationList, GatherAsynchronousTransitiveDependencies(requiredModule)).
       ListAppendUnique(evaluationList, GatherAsynchronousTransitiveDependencies(requiredModule));
-      // For named-import consumers (request.ImportedNames is a list of names),
-      // eagerly add the deferred dep so its bindings are available at access time
-      // without phase 2b's [[Get]] hook. For namespace-import consumers
-      // (`import defer * as ns`, ImportedNames='all'), preserve the deferred
-      // semantics: don't add the dep eagerly — the [[Get]] hook handles it.
-      if (request.ImportedNames !== 'all' && !evaluationList.includes(requiredModule)) {
-        evaluationList.push(requiredModule);
-      }
     } else if (!evaluationList.includes(requiredModule)) {
       // c. Else if evaluationList does not contain requiredModule, then
       // i. Append requiredModule to evaluationList.
@@ -673,10 +677,6 @@ export function BuildEvaluationList(
       const importedNames = request.ImportedNames;
       // ii. If importedNames = all, then
       if (importedNames === 'all') {
-        // import * over a deferred re-exporter: only asynchronous transitive
-        // deps of `export defer` sources evaluate here. Synchronous deps are
-        // deferred to module-namespace [[Get]] (phase 2b).
-        // 1. Let allOptionalIndirectRequests be requiredModule.GetOptionalIndirectExportsModuleRequests(importedNames).
         const allOptionalIndirectRequests = requiredModule.GetOptionalIndirectExportsModuleRequests(importedNames);
         // 2. Let seen be a new empty List.
         // 3. Perform ListAppendUnique(evaluationList, GatherAsynchronousTransitiveDependenciesForRequests(requiredModule, allOptionalIndirectRequests, seen)).
@@ -889,7 +889,7 @@ function AsyncModuleExecutionRejected(module: CyclicModuleRecord, error: Value) 
 }
 
 function getRecordWithSpecifier(loadedModules: CyclicModuleRecord['LoadedModules'], request: ModuleRequestRecord) {
-  const records = loadedModules.filter((r) => ModuleRequestsEqual(r, request));
+  const records = loadedModules.filter((r) => ModuleRequestsKeyEqual(r, request));
   Assert(records.length <= 1);
   return records.length === 1 ? records[0] : undefined;
 }
@@ -901,7 +901,7 @@ export function GetImportedModule(referrer: CyclicModuleRecord, request: ModuleR
   return record.Module;
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#sec-FinishLoadingImportedModule */
+/** https://tc39.es/ecma262/#sec-FinishLoadingImportedModule */
 export function FinishLoadingImportedModule(referrer: ScriptRecord | CyclicModuleRecord | Realm, moduleRequest: ModuleRequestRecord, result: PlainCompletion<AbstractModuleRecord>, state: GraphLoadingState | PromiseCapabilityRecord) {
   result = EnsureCompletion(result);
   // 1. If result is a normal completion, then
@@ -942,7 +942,7 @@ export function AllImportAttributesSupported(attributes: readonly ImportAttribut
   return undefined;
 }
 
-/** https://tc39.es/proposal-defer-import-eval/#sec-getmodulenamespace */
+/** https://tc39.es/ecma262/#sec-getmodulenamespace */
 export function GetModuleNamespace(
   module: AbstractModuleRecord,
   phase: 'defer' | 'evaluation',
@@ -961,9 +961,6 @@ export function GetModuleNamespace(
     const unambiguousNames = [];
     // c. For each element name of exportedNames, do
     for (const name of exportedNames) {
-      // proposal-defer-import-eval: when phase is defer, do not include "then"
-      // in the namespace's exports list, since the namespace is intentionally
-      // not awaitable (avoiding accidental thenable behavior).
       if (phase !== 'defer' || name.stringValue() !== 'then') {
         // i. Let resolution be module.ResolveExport(name).
         const resolution = module.ResolveExport(name);
