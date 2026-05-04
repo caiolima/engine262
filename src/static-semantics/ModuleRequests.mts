@@ -25,34 +25,33 @@ function stringsEqual(left: JSStringValue, right: JSStringValue) {
   return left === right || left.stringValue() === right.stringValue();
 }
 
-// Equality compares Specifier + Attributes only.
-// ImportedNames and Phase are intentionally NOT part of equality —
-// they are merged/refined by callers, not used to distinguish records.
 /** https://tc39.es/proposal-defer-import-eval/#sec-ModuleRequestsKeyEqual */
-export function ModuleRequestsEqual(left: ModuleRequestRecord | LoadedModuleRequestRecord, right: ModuleRequestRecord | LoadedModuleRequestRecord) {
-  // 1. If left.[[Specifier]] is right.[[Specifier]], then
-  //    a. (Compare attributes...)
+export function ModuleRequestsKeyEqual(left: ModuleRequestRecord | LoadedModuleRequestRecord, right: ModuleRequestRecord | LoadedModuleRequestRecord) {
+  // 1. If left.[[Specifier]] is not right.[[Specifier]], return false.
   if (!stringsEqual(left.Specifier, right.Specifier)) {
     return false;
   }
+  // 2. Let leftAttrs be left.[[Attributes]].
   const leftAttrs = left.Attributes;
+  // 3. Let rightAttrs be right.[[Attributes]].
   const rightAttrs = right.Attributes;
+  // 4. Let leftAttrsCount be the number of elements in leftAttrs.
   const leftAttrsCount = leftAttrs.length;
+  // 5. Let rightAttrsCount be the number of elements in rightAttrs.
   const rightAttrsCount = rightAttrs.length;
-  // b. If the number of elements in left.[[Attributes]] is not equal to the number of elements in right.[[Attributes]], return false.
+  // 6. If leftAttrsCount ≠ rightAttrsCount, return false.
   if (leftAttrsCount !== rightAttrsCount) {
     return false;
   }
-  // c. For each ImportAttribute Record l of left.[[Attributes]], do
-  //    i. If right.[[Attributes]] does not contain a record r such that l.[[Key]] is r.[[Key]] and l.[[Value]] is r.[[Value]], return false.
+  // 7. For each ImportAttribute Record l of leftAttrs, do
   for (const l of leftAttrs) {
+    // a. If rightAttrs does not contain an ImportAttribute Record r such that l.[[Key]] is r.[[Key]] and l.[[Value]] is r.[[Value]], return false.
     if (!rightAttrs.some((r) => stringsEqual(l.Key, r.Key) && stringsEqual(l.Value, r.Value))) {
       return false;
     }
   }
-  // d. Return true.
+  // 8. Return true.
   return true;
-  // 2. Otherwise return false.
 }
 
 // https://tc39.es/ecma262/#sec-withclausetoattributes
@@ -133,7 +132,7 @@ export function ModuleRequests(node: ParseNode): ModuleRequestRecord[] {
       for (const item of node.ModuleItemList) {
         const additionalRequests = ModuleRequests(item);
         for (const mr of additionalRequests) {
-          const existing = requests.find((r) => ModuleRequestsEqual(r, mr) && r.Phase === mr.Phase);
+          const existing = requests.find((r) => ModuleRequestsKeyEqual(r, mr) && r.Phase === mr.Phase);
           if (existing) {
             (existing as Mutable<ModuleRequestRecord>).ImportedNames = MergeImportedNames(existing.ImportedNames, mr.ImportedNames);
           } else {
