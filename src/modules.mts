@@ -36,6 +36,8 @@ import {
   InnerModuleEvaluation,
   InnerModuleLinking,
   InnerModuleLoading,
+  MergeImportedNames,
+  ModuleRequestsKeyEqual,
   SafePerformPromiseAll,
   SameValue,
   AsyncBlockStart,
@@ -54,15 +56,12 @@ import {
 
 // https://tc39.es/ecma262/#loadedmodulerequest-record
 export interface LoadedModuleRequestRecord {
-  // [[Specifier]] — String — the specifier from the import or export declaration.
   readonly Specifier: JSStringValue;
-  // [[Attributes]] — List of ImportAttribute Records — the module's import attributes.
   readonly Attributes: ImportAttributeRecord[];
-  // [[Module]] — Module Record — the loaded module corresponding to this request.
   readonly Module: AbstractModuleRecord
 }
 
-/** https://tc39.es/proposal-deferred-reexports/#resolvedbinding-record */
+// #resolvedbinding-record
 export class ResolvedBindingRecord {
   readonly Module: AbstractModuleRecord;
 
@@ -182,11 +181,10 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
 
   abstract ExecuteModule(capability?: PromiseCapabilityRecord): ValueEvaluator;
 
-  /** https://tc39.es/proposal-deferred-reexports/#sec-LoadRequestedModules */
+  /** https://tc39.es/ecma262/#sec-LoadRequestedModules */
   LoadRequestedModules(hostDefined?: ModuleRecordHostDefined, importedNames: ImportedNamesValue = 'all') {
     const module = this;
     // 1. If importedNames is not present, set importedNames to ~all~.
-    //    (handled via the default parameter above)
     // 2. If hostDefined is not present, set hostDefined to empty.
     // 3. Let pc be ! NewPromiseCapability(%Promise%).
     const pc = X(NewPromiseCapability(surroundingAgent.intrinsic('%Promise%')));
@@ -201,7 +199,7 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
     return pc.Promise;
   }
 
-  /** https://tc39.es/proposal-deferred-reexports/#sec-moduledeclarationlinking */
+  /** https://tc39.es/ecma262/#sec-moduledeclarationlinking */
   Link(importedNames: ImportedNamesValue = 'all'): PlainCompletion<void> {
     const module = this;
     // 1. Assert: module.[[Status]] is one of unlinked, linked, evaluating-async, or evaluated.
@@ -224,7 +222,7 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
       // b. Assert: module.[[Status]] is unlinked.
       Assert(module.Status === 'unlinked');
       // c. Return ? result.
-      return result;
+      return Q(result);
     }
     // 6. Assert: module.[[Status]] is one of linked, evaluating-async, or evaluated.
     Assert(module.Status === 'linked' || module.Status === 'evaluating-async' || module.Status === 'evaluated');
@@ -251,7 +249,7 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
     return NormalCompletion(undefined);
   }
 
-  /** https://tc39.es/proposal-deferred-reexports/#sec-moduleevaluation */
+  /** https://tc39.es/ecma262/#sec-moduleevaluation */
   * Evaluate(importedNames: ImportedNamesValue = []): Evaluator<PromiseObject> {
     const module: CyclicModuleRecord = this;
 
@@ -269,14 +267,8 @@ export abstract class CyclicModuleRecord extends AbstractModuleRecord {
     // 2. Assert: module.[[Status]] is one of linked, evaluating-async, or evaluated.
     Assert(module.Status === 'linked' || module.Status === 'evaluating-async' || module.Status === 'evaluated');
     // 3. If importedNames is not present, set importedNames to « ».
-    //    (handled via the default parameter above)
-
     let topLevelPromise: PromiseObject;
     // 4. If module.[[Status]] is either evaluating-async or evaluated, then
-    //    Reuse an existing TopLevelCapability when one is reachable via CycleRoot
-    //    (e.g., dynamic import of a module already evaluated as a static
-    //    dependency). Otherwise fall through to the fresh-capability path —
-    //    InnerModuleEvaluation short-circuits for already-evaluated modules.
     if ((module.Status === 'evaluating-async' || module.Status === 'evaluated')
         && module.CycleRoot !== undefined && module.CycleRoot.TopLevelCapability !== undefined) {
       // a. Assert: module.[[CycleRoot]].[[TopLevelCapability]] is not empty.
@@ -413,7 +405,7 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
     this.OptionalIndirectExportEntries = init.OptionalIndirectExportEntries ?? [];
   }
 
-  /** https://tc39.es/proposal-deferred-reexports/#sec-getexportednames */
+  /** https://tc39.es/ecma262/#sec-getexportednames */
   GetExportedNames(exportStarSet: AbstractModuleRecord[]) {
     const module = this;
     // 1. Assert: module.[[Status]] is not new.
@@ -440,9 +432,11 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
       // c. Append e.[[ExportName]] to exportedNames.
       exportedNames.push(e.ExportName);
     }
-    // 7. For each ExportEntry Record e in [[IndirectExportEntries]] ++ [[OptionalIndirectExportEntries]], do
+    // 6. Let allNamedExportEntries be the list-concatenation of module.[[LocalExportEntries]], module.[[IndirectExportEntries]], and module.[[OptionalIndirectExportEntries]].
+    const allNamedExportEntries = [...module.IndirectExportEntries, ...module.OptionalIndirectExportEntries];
+    // 7. For each ExportEntry Record e of allNamedExportEntries, do
     //    https://tc39.es/proposal-deferred-reexports/#sec-getexportednames
-    for (const e of [...module.IndirectExportEntries, ...module.OptionalIndirectExportEntries]) {
+    for (const e of allNamedExportEntries) {
       // a. Assert: module imports a specific binding for this export.
       // b. Assert: e.[[ExportName]] is not null.
       Assert(!(e.ExportName instanceof NullValue));
@@ -471,7 +465,7 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
     return exportedNames;
   }
 
-  /** https://tc39.es/proposal-deferred-reexports/#sec-resolveexport */
+  /** https://tc39.es/ecma262/#sec-resolveexport */
   ResolveExport(exportName: JSStringValue, resolveSet?: ResolveSetItem[]) {
     const module = this;
     // 1. Assert: module.[[Status]] is not new.
@@ -503,9 +497,10 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
         });
       }
     }
-    // 6. For each ExportEntry Record e in [[IndirectExportEntries]] ++ [[OptionalIndirectExportEntries]], do
-    //    https://tc39.es/proposal-deferred-reexports/#sec-resolveexport
+    // 6. Let allIndirectEntries be the list-concatenation of module.[[IndirectExportEntries]] and module.[[OptionalIndirectExportEntries]].
     const allIndirectEntries = [...module.IndirectExportEntries, ...module.OptionalIndirectExportEntries];
+    // 7. For each ExportEntry Record e in allIndirectEntries, do
+    //    https://tc39.es/proposal-deferred-reexports/#sec-resolveexport
     for (const e of allIndirectEntries) {
       // a. If SameValue(exportName, e.[[ExportName]]) is true, then
       if (SameValue(exportName, e.ExportName) === Value.true) {
@@ -585,38 +580,72 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
     return starResolution;
   }
 
-  /** https://tc39.es/proposal-deferred-reexports/#sec-GetOptionalIndirectExportsModuleRequests */
+  /**
+   * https://tc39.es/proposal-deferred-reexports/#sec-GetOptionalIndirectExportsModuleRequests
+   *
+   * IMPORTANT: This implementation must mirror the spec algorithm step-for-step.
+   * Do not introduce deviations or shortcuts. If a behavioral change seems
+   * desirable for performance or convenience, propose it upstream first;
+   * otherwise keep this code in lock-step with the spec text.
+   */
   override GetOptionalIndirectExportsModuleRequests(importedNames: ImportedNamesValue): readonly ModuleRequestRecord[] {
     // 1. Let requests be a new empty List.
-    const result: ModuleRequestRecord[] = [];
+    const requests: ModuleRequestRecord[] = [];
     // 2. For each ExportEntry Record oie of module.[[OptionalIndirectExportEntries]], do
     for (const oie of this.OptionalIndirectExportEntries) {
-      const request = oie.ModuleRequest as ModuleRequestRecord;
       const exportName = oie.ExportName;
-      if (!(exportName instanceof JSStringValue)) {
-        continue;
-      }
       // a. If importedNames is all or importedNames contains oie.[[ExportName]], then
-      //    (Engine262 also handles 'all-but-default' as everything except 'default'.)
       let included: boolean;
       if (importedNames === 'all') {
         included = true;
       } else if (importedNames === 'all-but-default') {
-        included = exportName.stringValue() !== 'default';
-      } else {
+        included = exportName instanceof JSStringValue && exportName.stringValue() !== 'default';
+      } else if (exportName instanceof JSStringValue) {
         included = (importedNames as readonly JSStringValue[]).some((n) => n.stringValue() === exportName.stringValue());
+      } else {
+        included = false;
       }
-      if (included && !result.includes(request)) {
-        // i. Let nextRequest be oie.[[ModuleRequest]].
-        // (skipping spec's request-merging algorithm — the implementation reuses
-        //  the original ModuleRequest entries, which suffices for the lookup
-        //  patterns used by [[Get]] step 5 and BuildEvaluationList.)
-        // vii. If existingRequest is empty, then ... append request to requests.
-        result.push(request);
+      if (!included) {
+        continue;
+      }
+      // i. Let nextRequest be oie.[[ModuleRequest]].
+      const nextRequest = oie.ModuleRequest as ModuleRequestRecord;
+      // ii. Let existingRequest be empty.
+      let existingRequest: ModuleRequestRecord | undefined;
+      // iii. For each ModuleRequest Record r in requests, do
+      for (const r of requests) {
+        // 1. If existingRequest is empty and ModuleRequestsKeyEqual(r, nextRequest) is true and r.[[Phase]] is nextRequest.[[Phase]], then
+        if (existingRequest === undefined && ModuleRequestsKeyEqual(r, nextRequest) && r.Phase === nextRequest.Phase) {
+          // a. Set existingRequest to r.
+          existingRequest = r;
+        }
+      }
+      // iv. Let newImportedNames be all.
+      let newImportedNames: ImportedNamesValue = 'all';
+      // v. Assert: oie.[[ImportName]] is a String or all.
+      Assert(oie.ImportName instanceof JSStringValue || oie.ImportName === 'all-but-default');
+      // vi. If oie.[[ImportName]] is a String, set newImportedNames to « oie.[[ImportName]] ».
+      if (oie.ImportName instanceof JSStringValue) {
+        newImportedNames = [oie.ImportName];
+      }
+      // vii. If existingRequest is empty, then
+      if (existingRequest === undefined) {
+        // 1. Let request be the ModuleRequest Record { [[Specifier]]: nextRequest.[[Specifier]], [[Attributes]]: nextRequest.[[Attributes]], [[Phase]]: nextRequest.[[Phase]], [[ImportedNames]]: newImportedNames }.
+        const request: ModuleRequestRecord = {
+          Specifier: nextRequest.Specifier,
+          Attributes: nextRequest.Attributes,
+          Phase: nextRequest.Phase,
+          ImportedNames: newImportedNames,
+        };
+        // 2. Append request to requests.
+        requests.push(request);
+      } else { // viii. Else,
+        // 1. Set existingRequest.[[ImportedNames]] to MergeImportedNames(existingRequest.[[ImportedNames]], newImportedNames).
+        (existingRequest as Mutable<ModuleRequestRecord>).ImportedNames = MergeImportedNames(existingRequest.ImportedNames, newImportedNames);
       }
     }
     // 3. Return requests.
-    return result;
+    return requests;
   }
 
   /** https://tc39.es/proposal-deferred-reexports/#sec-source-text-module-record-initialize-environment */
