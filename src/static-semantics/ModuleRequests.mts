@@ -161,8 +161,6 @@ export function ModuleRequests(node: ParseNode): ModuleRequestRecord[] {
       if (node.FromClause) {
         const fromNode = node as ParseNode.ExportDeclaration_NamedFrom;
         // `export defer ... from "m"` is tracked via [[OptionalIndirectExportEntries]]
-        // (engine262: filtered in GetOptionalIndirectExportsModuleRequests via Phase),
-        // not RequestedModules — see proposal-deferred-reexports.
         if (fromNode.Phase === 'defer') {
           return [];
         }

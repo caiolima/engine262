@@ -781,7 +781,7 @@ function GatherAvailableAncestors(module: CyclicModuleRecord, execList: CyclicMo
   // 2. Return unused.
 }
 
-/** https://tc39.es/ecma262/#sec-asyncmodulexecutionfulfilled */
+/** https://tc39.es/ecma262/#sec-async-module-execution-fulfilled */
 function* AsyncModuleExecutionFulfilled(module: CyclicModuleRecord): PlainEvaluator {
   // 1. If module.[[Status]] is evaluated, then
   if (module.Status === 'evaluated') {
@@ -813,11 +813,11 @@ function* AsyncModuleExecutionFulfilled(module: CyclicModuleRecord): PlainEvalua
   GatherAvailableAncestors(module, execList);
   // 10. Let sortedExecList be a List whose elements are the elements of execList,
   //     in the order in which they had their [[AsyncEvaluationOrder]] field set.
-  Assert(execList.every((m) => typeof m.AsyncEvaluationOrder === 'number' && m.PendingAsyncDependencies === 0 && m.EvaluationError === undefined));
   const sortedExecList = execList.toSorted((m1, m2) => (m1.AsyncEvaluationOrder as number) - (m2.AsyncEvaluationOrder as number));
   // 11. Assert: All elements of sortedExecList have their [[AsyncEvaluationOrder]] field set
   //     to an integer, [[PendingAsyncDependencies]] field set to 0, and [[EvaluationError]]
   //     field set to empty.
+  Assert(execList.every((m) => typeof m.AsyncEvaluationOrder === 'number' && m.PendingAsyncDependencies === 0 && m.EvaluationError === undefined));
   // 12. For each Cyclic Module Record m of sortedExecList, do
   for (const m of sortedExecList) {
     // a. If m.[[Status]] is evaluated, then

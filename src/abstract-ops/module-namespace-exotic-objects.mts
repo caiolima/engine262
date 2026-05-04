@@ -116,12 +116,12 @@ const InternalMethods = {
     }
     return Value.false;
   },
-  /** https://tc39.es/proposal-deferred-reexports/#sec-module-namespace-exotic-objects-get-p-receiver */
+  /** https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-get-p-receiver */
   * Get(P, Receiver) {
     const O = this;
 
-    // 1. If IsSymbolLikeNamespaceKey(P, O), return ! OrdinaryGet(O, P, Receiver).
     Assert(IsPropertyKey(P));
+    // 1. If IsSymbolLikeNamespaceKey(P, O), return ! OrdinaryGet(O, P, Receiver).
     if (IsSymbolLikeNamespaceKey(P, O)) {
       return X(yield* OrdinaryGet(O, P, Receiver));
     }
@@ -152,12 +152,12 @@ const InternalMethods = {
     // 10. If binding.[[BindingName]] is namespace, then
     if (binding.BindingName === 'namespace') {
       // a. Return GetModuleNamespace(targetModule, evaluation).
-      return Q(GetModuleNamespace(targetModule, 'evaluation'));
+      return GetModuleNamespace(targetModule, 'evaluation');
     }
     // 11. If binding.[[BindingName]] is deferred-namespace, then
     if (binding.BindingName === 'deferred-namespace') {
       // a. Return GetModuleNamespace(targetModule, defer).
-      return Q(GetModuleNamespace(targetModule, 'defer'));
+      return GetModuleNamespace(targetModule, 'defer');
     }
     // 12. Let targetEnv be targetModule.[[Environment]].
     const targetEnv = targetModule.Environment;

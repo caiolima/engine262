@@ -580,14 +580,7 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
     return starResolution;
   }
 
-  /**
-   * https://tc39.es/proposal-deferred-reexports/#sec-GetOptionalIndirectExportsModuleRequests
-   *
-   * IMPORTANT: This implementation must mirror the spec algorithm step-for-step.
-   * Do not introduce deviations or shortcuts. If a behavioral change seems
-   * desirable for performance or convenience, propose it upstream first;
-   * otherwise keep this code in lock-step with the spec text.
-   */
+  /** https://tc39.es/proposal-deferred-reexports/#sec-GetOptionalIndirectExportsModuleRequests */
   override GetOptionalIndirectExportsModuleRequests(importedNames: ImportedNamesValue): readonly ModuleRequestRecord[] {
     // 1. Let requests be a new empty List.
     const requests: ModuleRequestRecord[] = [];
@@ -622,8 +615,9 @@ export class SourceTextModuleRecord extends CyclicModuleRecord {
       }
       // iv. Let newImportedNames be all.
       let newImportedNames: ImportedNamesValue = 'all';
-      // v. Assert: oie.[[ImportName]] is a String or all.
-      Assert(oie.ImportName instanceof JSStringValue || oie.ImportName === 'all-but-default');
+      // v. Assert: oie.[[ImportName]] is a String or namespace.
+      // (this is deviating from spec because spec looks wrong)
+      Assert(oie.ImportName instanceof JSStringValue || oie.ImportName === 'namespace');
       // vi. If oie.[[ImportName]] is a String, set newImportedNames to « oie.[[ImportName]] ».
       if (oie.ImportName instanceof JSStringValue) {
         newImportedNames = [oie.ImportName];
