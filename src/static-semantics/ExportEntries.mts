@@ -24,11 +24,17 @@ export function ExportEntries(node: ParseNode | readonly ParseNode[]): ExportEnt
     case 'ExportDeclaration':
       switch (true) {
         case !!node.ExportFromClause && !!node.FromClause: {
-          // `export` [defer] ExportFromClause FromClause WithClause? `;`
-          // Construct the ModuleRequest directly. ModuleRequests excludes
-          // `export defer` to keep deferred re-exports out of [[RequestedModules]];
-          // ExportEntries still needs the request so the entry references it.
           const fromNode = node as ParseNode.ExportDeclaration_NamedFrom;
+          // ExportDeclaration : `export` `defer` ExportFromClause FromClause WithClause? `;`
+          // 1. Return a new empty List.
+          // (https://tc39.es/proposal-deferred-reexports/#sec-static-semantics-exportentries)
+          // The corresponding entries are produced by OptionalIndirectExportEntries instead.
+          if (fromNode.Phase === 'defer') {
+            return [];
+          }
+          // ExportDeclaration : `export` ExportFromClause FromClause WithClause? `;`
+          // 1. Let module be the sole element of ModuleRequests of FromClause.
+          // 2. Return ExportEntriesForModule of ExportFromClause with argument module.
           const module = ExportFromDeclarationModuleRequest(fromNode);
           return ExportEntriesForModule(fromNode.ExportFromClause, module);
         }
@@ -128,4 +134,49 @@ export interface ExportEntry {
   readonly ImportName: JSStringValue | NullValue | 'namespace' | 'all-but-default';
   readonly LocalName: JSStringValue | NullValue;
   readonly ExportName: JSStringValue | NullValue;
+}
+
+/** https://tc39.es/proposal-deferred-reexports/#sec-static-semantics-optionalindirectexportentries */
+export function OptionalIndirectExportEntries(node: ParseNode | readonly ParseNode[]): ExportEntry[] {
+  if (isArray(node)) {
+    // ModuleItemList : ModuleItemList ModuleItem
+    //   1. Let entries1 be OptionalIndirectExportEntries of ModuleItemList.
+    //   2. Let entries2 be OptionalIndirectExportEntries of ModuleItem.
+    //   3. Return the list-concatenation of entries1 and entries2.
+    const entries: ExportEntry[] = [];
+    node.forEach((n) => {
+      entries.push(...OptionalIndirectExportEntries(n));
+    });
+    return entries;
+  }
+  switch (node.type) {
+    case 'Module':
+      // Module : [empty]
+      //   1. Return a new empty List.
+      if (!node.ModuleBody) {
+        return [];
+      }
+      return OptionalIndirectExportEntries(node.ModuleBody);
+    case 'ModuleBody':
+      return OptionalIndirectExportEntries(node.ModuleItemList);
+    case 'ExportDeclaration': {
+      // Only `ExportDeclaration : export defer ExportFromClause FromClause WithClause? ;`
+      // produces optional indirect entries; every other ExportDeclaration production
+      // (and ImportDeclaration / StatementListItem) returns a new empty List.
+      if (!node.FromClause) {
+        return [];
+      }
+      const fromNode = node as ParseNode.ExportDeclaration_NamedFrom;
+      if (fromNode.Phase !== 'defer') {
+        return [];
+      }
+      // 1. If WithClause is present, let request be ExportFromDeclarationModuleRequest(ExportFromClause, FromClause, WithClause).
+      // 2. Else, let request be ExportFromDeclarationModuleRequest(ExportFromClause, FromClause).
+      const request = ExportFromDeclarationModuleRequest(fromNode);
+      // 3. Return ExportEntriesForModule of ExportFromClause with argument request.
+      return ExportEntriesForModule(fromNode.ExportFromClause, request);
+    }
+    default:
+      return [];
+  }
 }

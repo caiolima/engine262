@@ -116,7 +116,7 @@ export function ExportFromDeclarationModuleRequest(node: ParseNode.ExportDeclara
   const attributes = node.WithClause ? WithClauseToAttributes(node.WithClause) : [];
   const importedNames = importedNamesFromExportFromClause(node.ExportFromClause);
   return {
-    Specifier: specifier, Attributes: attributes, Phase: node.Phase ?? 'evaluation', ImportedNames: importedNames,
+    Specifier: specifier, Attributes: attributes, Phase: 'evaluation', ImportedNames: importedNames,
   };
 }
 

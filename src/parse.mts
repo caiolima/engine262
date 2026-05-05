@@ -8,9 +8,9 @@ import { JSStringValue, ObjectValue, Value } from './value.mts';
 import { Q, type PlainCompletion } from './completion.mts';
 import {
   ModuleRequests,
-  type ModuleRequestRecord,
   ImportEntries,
   ExportEntries,
+  OptionalIndirectExportEntries,
   ImportedLocalNames,
 } from './static-semantics/all.mts';
 import { kInternal } from './utils/internal.mts';
@@ -146,9 +146,6 @@ export function ParseModule(sourceText: string, realm: Realm, hostDefined: Modul
   const localExportEntries = [];
   // 9. Let starExportEntries be a new empty List.
   const starExportEntries = [];
-  // OptionalIndirectExportEntries: deferred re-exports (`export defer ... from`).
-  // https://tc39.es/proposal-deferred-reexports/
-  const optionalIndirectExportEntries = [];
   // 10. Let exportEntries be ExportEntries of body.
   const exportEntries = ExportEntries(body);
   // 11. For each ExportEntry Record ee in exportEntries, do
@@ -174,15 +171,14 @@ export function ParseModule(sourceText: string, realm: Realm, hostDefined: Modul
     } else if (ee.ImportName && ee.ImportName === 'all-but-default' && ee.ExportName === Value.null) { // b. Else if ee.[[ImportName]] is ~all-but-default~ and ee.[[ExportName]] is null, then
       // i. Append ee to starExportEntries.
       starExportEntries.push(ee);
-    } else if ((ee.ModuleRequest as ModuleRequestRecord).Phase === 'defer') {
-      // Deferred re-exports go into OptionalIndirectExportEntries, NOT IndirectExportEntries.
-      // This keeps them out of InitializeEnvironment's eager validation loop.
-      optionalIndirectExportEntries.push(ee);
     } else { // c. Else,
       // i. Append ee to indirectExportEntries.
       indirectExportEntries.push(ee);
     }
   }
+  // Let optionalIndirectExportEntries be OptionalIndirectExportEntries of body.
+  // (https://tc39.es/proposal-deferred-reexports/#sec-parsemodule)
+  const optionalIndirectExportEntries = OptionalIndirectExportEntries(body);
   // 12. Return Source Text Module Record { [[Realm]]: realm, [[Environment]]: undefined, [[Namespace]]: undefined, [[Status]]: unlinked, [[EvaluationError]]: undefined, [[HostDefined]]: hostDefined, [[ECMAScriptCode]]: body, [[Context]]: empty, [[ImportMeta]]: empty, [[RequestedModules]]: requestedModules, [[ImportEntries]]: importEntries, [[LocalExportEntries]]: localExportEntries, [[IndirectExportEntries]]: indirectExportEntries, [[StarExportEntries]]: starExportEntries, [[DFSAncestorIndex]]: undefined }.
   const module = new (hostDefined.SourceTextModuleRecord || SourceTextModuleRecord)({
     Realm: realm,
